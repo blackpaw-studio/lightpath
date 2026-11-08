@@ -11,6 +11,7 @@ import { ORIGIN_KEY, type Pose, type PoseMap } from "./globePoses";
 import { tunnelTangent, type TunnelFrame, type TunnelGate } from "./tunnelLayout";
 import { TUBE_R } from "./tunnel";
 import { createGateLabel, type GateLabelView } from "./labels";
+import { labelVisibility } from "./labelRank";
 
 export const GATE_R = 0.2;
 const MOUTH_R = TUBE_R * 0.94;
@@ -64,6 +65,8 @@ export interface GateFrameInput {
   readonly depths: ReadonlyMap<number, number>;
   readonly frame: TunnelFrame | null;
   readonly cameraPos: Vec3Like;
+  /** Unit view direction: labels rank gates by how far ahead of the camera they are. */
+  readonly cameraFwd: Vec3Like;
   /** Trace generation (TraceState.generation): a new trace rebuilds every hop's gate and label. */
   readonly generation: number;
   /** Ring opacity (plan: 0.4 → 0.8 of viewT). */
@@ -134,8 +137,21 @@ const disposeEntry = (e: Entry, parent: Object3D): void => {
 
 /** Distance fog for rings (the tube shader fogs the same way). */
 const fog = (d: number): number => Math.exp(-d * 0.2) * smoothstep(0.02, 0.18, d);
-/** Labels only for the nearest few gates, so the vanishing point never piles up text. */
-const labelRange = (d: number): number => smoothstep(2.6, 1.6, d) * smoothstep(0.15, 0.45, d);
+/** Far labels fade even when few gates are ahead (labelVisibility handles the crowding). */
+const labelFar = (ahead: number): number => smoothstep(4.5, 3, ahead);
+
+const aheadOf = (pos: Vec3Like, input: GateFrameInput): number =>
+  (pos[0] - input.cameraPos[0]) * input.cameraFwd[0] +
+  (pos[1] - input.cameraPos[1]) * input.cameraFwd[1] +
+  (pos[2] - input.cameraPos[2]) * input.cameraFwd[2];
+
+/** Label opacity per hop key: only the nearest gates ahead keep a label, so they never stack. */
+const labelOpacities = (input: GateFrameInput, labelled: ReadonlySet<number>): Map<number, number> => {
+  const keys = [...input.poses.keys()].filter((k) => labelled.has(k));
+  const ahead = keys.map((k) => aheadOf(input.poses.get(k)!.pos, input));
+  const vis = labelVisibility(ahead);
+  return new Map(keys.map((k, i) => [k, vis[i]! * labelFar(ahead[i]!)]));
+};
 
 export const createGates = (parent: Object3D): Gates => {
   const entries = new Map<number, Entry>();
@@ -165,7 +181,9 @@ export const createGates = (parent: Object3D): Gates => {
     e.label.setSide(side > 0 ? "right" : "left");
   };
 
-  const updateEntry = (key: number, e: Entry, pose: Pose, gate: TunnelGate | undefined, input: GateFrameInput): void => {
+  const updateEntry = (
+    key: number, e: Entry, pose: Pose, gate: TunnelGate | undefined, input: GateFrameInput, labelVis: number,
+  ): void => {
     const s = input.depths.get(key) ?? 0;
     const isMouth = key === ORIGIN_KEY;
     const morph = pose.morph ?? 0;
@@ -195,7 +213,7 @@ export const createGates = (parent: Object3D): Gates => {
       const side = key % 2 === 0 ? 1 : -1;
       placeLabel(e, pose, input.frame, input.aspect, side);
       e.label.set(gate, hex);
-      e.label.setOpacity(pose.opacity * input.labelFade * labelRange(d));
+      e.label.setOpacity(pose.opacity * input.labelFade * labelVis);
     }
   };
 
@@ -211,6 +229,7 @@ export const createGates = (parent: Object3D): Gates => {
           entries.delete(k);
         }
       }
+      const labels = labelOpacities(input, new Set(byTtl.keys()));
       for (const [k, pose] of input.poses) {
         const gate = byTtl.get(k);
         if (k !== ORIGIN_KEY && !gate) continue;
@@ -219,7 +238,7 @@ export const createGates = (parent: Object3D): Gates => {
           e = makeEntry(k, gate?.broken ?? false, input.generation, parent);
           entries.set(k, e);
         }
-        updateEntry(k, e, pose, gate, input);
+        updateEntry(k, e, pose, gate, input, labels.get(k) ?? 0);
       }
     },
     dispose: () => {

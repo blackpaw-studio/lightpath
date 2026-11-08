@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { Group, type Object3D } from "three";
 import { describe, expect, it } from "vitest";
-import { latLonToVec3 } from "../geo";
+import { latLonToVec3, type Vec3 } from "../geo";
 import { createGates, type GateFrameInput } from "./gates";
 import { ORIGIN_KEY, type Pose } from "./globePoses";
 import { tunnelFrame, tunnelPoint, type TunnelGate } from "./tunnelLayout";
@@ -19,6 +19,7 @@ const input = (generation: number): GateFrameInput => {
     depths: new Map([[ORIGIN_KEY, 0], ...gates.map((g) => [g.ttl, g.s] as const)]),
     frame,
     cameraPos: tunnelPoint(frame, 0.1),
+    cameraFwd: frame.n as Vec3,
     ringFade: 1, labelFade: 1, nowMs: 0, reducedMotion: false, aspect: 16 / 9,
   };
 };

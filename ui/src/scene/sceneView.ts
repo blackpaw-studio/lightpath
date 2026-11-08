@@ -4,7 +4,7 @@
 // and labels from the same poses → render.
 import { Matrix4, Vector3 } from "three";
 import { CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
-import type { Vec3 } from "../geo";
+import { normalize, sub, type Vec3 } from "../geo";
 import type { Steppable } from "../loop";
 import type { TraceState } from "../reducer";
 import type { TraceFrame } from "../testhooks";
@@ -125,7 +125,7 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
       tunnel.update(nowMs, f.tunnel, opts.reducedMotion);
       gates.update({
         poses: ctl.poses(), gates: ctl.gates(), depths: ctl.depths(), frame, cameraPos: pose.pos,
-        generation,
+        cameraFwd: normalize(sub(pose.look, pose.pos)), generation,
         ringFade: f.gates, labelFade: f.labels, nowMs, reducedMotion: opts.reducedMotion, aspect: size.w / size.h,
       });
     },
