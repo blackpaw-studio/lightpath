@@ -17,7 +17,8 @@ export interface LaidHop {
 }
 
 export interface GlobeLayout {
-  readonly origin: Vec3;
+  /** Null until there is something to anchor it (no trace, or no geo and no hops yet). */
+  readonly origin: Vec3 | null;
   readonly hops: readonly LaidHop[];
 }
 
@@ -27,13 +28,13 @@ const located = (h: Hop): h is Hop & { lat: number; lon: number } => h.lat !== n
 export const globeLayout = (state: TraceState): GlobeLayout => {
   const anchors: LocatedHop[] = state.hops.filter(located).map((h) => ({ ttl: h.ttl, pos: latLonToVec3(h.lat, h.lon) }));
   const o = state.origin;
-  const origin =
-    o && o.lat !== null && o.lon !== null ? latLonToVec3(o.lat, o.lon) : (anchors[0]?.pos ?? latLonToVec3(0, 0));
+  const known = o && o.lat !== null && o.lon !== null ? latLonToVec3(o.lat, o.lon) : (anchors[0]?.pos ?? null);
+  const origin = known ?? (state.hops.length > 0 ? latLonToVec3(0, 0) : null);
   const hops = state.hops.map((h): LaidHop => {
     const rttMs = meanRtt(h.probes);
     return {
       ttl: h.ttl,
-      pos: located(h) ? latLonToVec3(h.lat, h.lon) : estimatePosition(h.ttl, anchors, origin),
+      pos: located(h) ? latLonToVec3(h.lat, h.lon) : estimatePosition(h.ttl, anchors, origin ?? latLonToVec3(0, 0)),
       estimated: !located(h),
       timeout: h.probes.every((p) => p.rttMs === null),
       rttMs,

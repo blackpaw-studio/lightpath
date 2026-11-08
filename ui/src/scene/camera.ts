@@ -1,5 +1,5 @@
 import { PerspectiveCamera } from "three";
-import { angularDistance, type Vec3 } from "../geo";
+import { angularDistance, latLonToVec3, slerpGreatCircle, type Vec3 } from "../geo";
 
 export interface SpringState {
   readonly x: number;
@@ -26,15 +26,39 @@ const norm = (v: Vec3): Vec3 => {
   return [v[0] / l, v[1] / l, v[2] / l];
 };
 
-/** Camera direction (unit, from globe centre) and distance framing the first and last points. */
+const CAP_ITERATIONS = 400;
+
+/**
+ * Approximate centre of the smallest spherical cap holding every point
+ * (Bădoiu–Clarkson: step toward the farthest point by 1/(k+1)), so dense
+ * clusters of hops do not pull the view off the route's extent.
+ */
+const capCentre = (points: readonly Vec3[], start: Vec3): Vec3 => {
+  let c = start;
+  for (let k = 1; k <= CAP_ITERATIONS; k++) {
+    const far = points.reduce((f, p) => (angularDistance(c, p) > angularDistance(c, f) ? p : f), c);
+    c = slerpGreatCircle(c, far, 1 / (k + 1));
+  }
+  return c;
+};
+
+/** Camera direction (unit, from globe centre) at the centre of the route's extent, and a distance fitting its span. */
 export const frameTarget = (points: readonly Vec3[]): { dir: Vec3; distance: number } => {
-  const first = points[0] ?? [0, 0, 1];
-  const last = points[points.length - 1] ?? first;
-  const sum: Vec3 = [first[0] + last[0], first[1] + last[1], first[2] + last[2]];
-  const dir = Math.hypot(...sum) < 1e-6 ? last : norm(sum);
+  const last = points[points.length - 1] ?? [0, 0, 1];
+  const sum = points.reduce<Vec3>((a, p) => [a[0] + p[0], a[1] + p[1], a[2] + p[2]], [0, 0, 0]);
+  // A centroid near zero means the route wraps the globe; just look at the newest hop.
+  const dir = Math.hypot(...sum) < 1e-6 * Math.max(points.length, 1) ? last : capCentre(points, norm(sum));
   const span = Math.max(...points.map((p) => angularDistance(dir, p)), 0);
   const t = Math.min(span / (Math.PI / 2), 1);
   return { dir, distance: NEAR_DISTANCE + (FAR_DISTANCE - NEAR_DISTANCE) * t };
+};
+
+/** Limits a direction's latitude (keeping longitude) so the camera never looks straight down a pole. */
+export const clampLatitude = (dir: Vec3, maxDeg: number): Vec3 => {
+  const lat = (Math.asin(Math.max(-1, Math.min(1, dir[1]))) * 180) / Math.PI;
+  if (Math.abs(lat) <= maxDeg) return dir;
+  const lon = (Math.atan2(-dir[2], dir[0]) * 180) / Math.PI;
+  return latLonToVec3(Math.sign(lat) * maxDeg, lon);
 };
 
 /** Backs off on portrait viewports so the framed span fits the narrow width. */
@@ -45,11 +69,12 @@ export const fitDistance = (distance: number, aspect: number, fovDeg: number): n
 };
 
 const OMEGA = 2.6;
-const ELEVATION = 0.22; // look slightly down on the framed point
+const ELEVATION = 0.12; // look slightly down on the framed point
+const MAX_CAMERA_LAT = 50;
 
 export interface CameraRig {
   readonly camera: PerspectiveCamera;
-  /** Ease toward framing these world points (origin first, newest last). Instant under reduced motion. */
+  /** Ease toward framing these world points (the route: origin first, newest last). Instant under reduced motion. */
   frame(points: readonly Vec3[], instant: boolean): void;
   update(dtMs: number): void;
   resize(aspect: number): void;
@@ -75,7 +100,7 @@ export const createCameraRig = (aspect: number): CameraRig => {
     camera,
     frame: (points, instant) => {
       const f = frameTarget(points);
-      const lifted = norm([f.dir[0], f.dir[1] + ELEVATION, f.dir[2]]);
+      const lifted = clampLatitude(norm([f.dir[0], f.dir[1] + ELEVATION, f.dir[2]]), MAX_CAMERA_LAT);
       target = { dir: lifted, distance: f.distance };
       if (instant) springs = [...target.dir, target.distance].map((x) => ({ x, v: 0 }));
     },

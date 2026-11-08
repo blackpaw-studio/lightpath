@@ -57,7 +57,11 @@ const glide = (from: Vec3, to: Vec3, dtMs: number): Vec3 =>
 
 /** Pure: advance smoothed positions one frame and produce this frame's poses. */
 export const stepGlobePoses = (prev: GlobePoseState, input: PoseInput): { state: GlobePoseState; poses: PoseMap } => {
-  const targets: [number, Vec3][] = [[ORIGIN_KEY, input.layout.origin], ...input.layout.hops.map((h): [number, Vec3] => [h.ttl, h.pos])];
+  const { origin, hops } = input.layout;
+  const targets: [number, Vec3][] = [
+    ...(origin ? [[ORIGIN_KEY, origin] as [number, Vec3]] : []),
+    ...hops.map((h): [number, Vec3] => [h.ttl, h.pos]),
+  ];
   const local = new Map(targets.map(([k, target]) => {
     const p = prev.local.get(k);
     return [k, p ? glide(p, target, input.dtMs) : target] as const;
@@ -68,4 +72,17 @@ export const stepGlobePoses = (prev: GlobePoseState, input: PoseInput): { state:
     return [k, { pos: rotateY(pos, input.rotationY), ...look }] as const;
   }));
   return { state: { local, bornAt }, poses };
+};
+
+/** Per-frame pose producer. The tunnel lane composes over this one. */
+export type PoseSource = (input: PoseInput) => PoseMap;
+
+/** Stateful wrapper over stepGlobePoses; call exactly once per frame. */
+export const createGlobePoseSource = (): PoseSource => {
+  let state = emptyPoseState;
+  return (input) => {
+    const r = stepGlobePoses(state, input);
+    state = r.state;
+    return r.poses;
+  };
 };

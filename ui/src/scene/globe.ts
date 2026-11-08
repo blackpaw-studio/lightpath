@@ -1,0 +1,217 @@
+// Globe view composition: renderer, scene graph, camera rig, bloom, and the
+// per-frame flow  state → layout → PoseMap → nodes/arcs.
+import { Color, NeutralToneMapping, Scene, Vector2, Vector3, WebGLRenderer } from "three";
+import type { Vec3 } from "../geo";
+import type { TraceState } from "../reducer";
+import { initialState } from "../reducer";
+import type { Steppable } from "../loop";
+import { projectFrame, type TraceFrame } from "../testhooks";
+import { createGlobeShell } from "./atmosphere";
+import { createBackdrop } from "./backdrop";
+import { createBloom, type Bloom } from "./bloom";
+import { createCameraRig, type CameraRig } from "./camera";
+import type { BloomTier } from "./frameBudget";
+import { createGlobePoseSource, ORIGIN_KEY, rotateY, type PoseMap, type PoseSource } from "./globePoses";
+import { createArcs, type ArcInfo } from "./arcs";
+import { createLandDots } from "./landdots";
+import { globeLayout, type GlobeLayout } from "./layout";
+import { createNodes, type NodeInfo } from "./nodes";
+import { createStars } from "./stars";
+
+/** Idle rotation, rad/s, while no trace is running (none under reduced motion). */
+export const IDLE_ROTATION = 0.02;
+const REDUCED_FADE_MS = 300;
+const REDUCED_FADE_FLOOR = 0.5;
+const ORIGIN_ARC_COLOR = "#bff6ff";
+
+export interface GlobeViewOptions {
+  readonly canvas: HTMLCanvasElement;
+  /** Flat unit-sphere xyz from loadLandDots. */
+  readonly landDots: Float32Array;
+  readonly reducedMotion: boolean;
+  readonly width: number;
+  readonly height: number;
+  readonly pixelRatio: number;
+  /** Pin bloom to a tier (test mode); otherwise the frame-time governor decides. */
+  readonly bloomTier?: BloomTier;
+}
+
+export interface GlobeView extends Steppable {
+  setState(state: TraceState): void;
+  resize(width: number, height: number, pixelRatio: number): void;
+  /** Poses produced this frame (one source per frame). */
+  poses(): PoseMap;
+  trace(): TraceFrame;
+  /** Replace the per-frame pose source (tunnel lane: wraps createGlobePoseSource). */
+  setPoseSource(source: PoseSource): void;
+  /** Fade globe body, atmosphere, land dots and arcs (tunnel transition). Nodes follow their poses. */
+  setGlobeOpacity(opacity: number): void;
+  bloomTier(): BloomTier;
+  readonly scene: Scene;
+  readonly rig: CameraRig;
+  readonly renderer: WebGLRenderer;
+  dispose(): void;
+}
+
+const nodeInfos = (state: TraceState, layout: GlobeLayout): Map<number, NodeInfo> => {
+  const last = layout.hops[layout.hops.length - 1];
+  const reached = state.status === "done" && state.reached === true;
+  return new Map<number, NodeInfo>([
+    [ORIGIN_KEY, { color: ORIGIN_ARC_COLOR, estimated: false, timeout: false, role: "origin" }],
+    ...layout.hops.map((h): [number, NodeInfo] => [h.ttl, {
+      color: h.color, estimated: h.estimated, timeout: h.timeout,
+      role: reached && h === last ? "destination" : "hop",
+    }]),
+  ]);
+};
+
+const arcInfos = (layout: GlobeLayout): ArcInfo[] =>
+  layout.hops.map((h, i) => {
+    const prev = layout.hops[i - 1];
+    return {
+      from: prev?.ttl ?? ORIGIN_KEY,
+      to: h.ttl,
+      colorFrom: prev?.color ?? ORIGIN_ARC_COLOR,
+      colorTo: h.color,
+      estimated: h.estimated || (prev?.estimated ?? false),
+    };
+  });
+
+const framingKey = (layout: GlobeLayout): string => {
+  const last = layout.hops[layout.hops.length - 1];
+  return [layout.origin?.join(",") ?? "", layout.hops.length, last?.ttl ?? "", last?.pos.map((x) => x.toFixed(3)).join(",") ?? ""].join("|");
+};
+
+export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
+  const renderer = new WebGLRenderer({ canvas: opts.canvas, antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(opts.pixelRatio);
+  renderer.setSize(opts.width, opts.height, false);
+  renderer.toneMapping = NeutralToneMapping;
+  renderer.toneMappingExposure = 1.05;
+
+  const scene = new Scene();
+  scene.background = new Color("#02040a");
+  const lightDir = new Vector3(-0.4, 0.6, 1).normalize();
+  const shell = createGlobeShell(lightDir);
+  const dots = createLandDots(opts.landDots, lightDir);
+  const stars = createStars();
+  stars.setPixelRatio(opts.pixelRatio);
+  const backdrop = createBackdrop(opts.width / opts.height);
+  scene.add(backdrop.mesh, stars.points, shell.atmosphere, shell.surface, dots.mesh);
+  const nodes = createNodes(scene);
+  const arcs = createArcs(scene);
+  arcs.setResolution(opts.width, opts.height, opts.pixelRatio);
+
+  const rig = createCameraRig(opts.width / opts.height);
+  const bloom: Bloom = createBloom(renderer, scene, rig.camera, opts.bloomTier ? { pinned: opts.bloomTier } : {});
+  bloom.setSize(opts.width, opts.height);
+
+  let size = { w: opts.width, h: opts.height };
+  let state: TraceState = initialState;
+  let layout = globeLayout(state);
+  let infos = nodeInfos(state, layout);
+  let arcList = arcInfos(layout);
+  let poseSource: PoseSource = createGlobePoseSource();
+  let poses: PoseMap = new Map();
+  let rotation = 0;
+  let now = 0;
+  let lastFraming = "";
+  let fadeStart: number | null = null;
+
+  const pixelWorld = (): number => {
+    const cam = rig.camera;
+    const dist = Math.max(cam.position.length() - 1, 0.1);
+    return (2 * Math.tan((cam.fov * Math.PI) / 360) * dist) / renderer.getDrawingBufferSize(drawSize).y;
+  };
+  const drawSize = new Vector2();
+  const camRight = new Vector3();
+  const camUp = new Vector3();
+  const updateLight = (): void => {
+    const cam = rig.camera;
+    camRight.setFromMatrixColumn(cam.matrixWorld, 0);
+    camUp.setFromMatrixColumn(cam.matrixWorld, 1);
+    lightDir.copy(cam.position).normalize().addScaledVector(camRight, -0.7).addScaledVector(camUp, 0.6).normalize();
+  };
+
+  const reframe = (): void => {
+    const key = framingKey(layout);
+    if (key === lastFraming) return;
+    lastFraming = key;
+    if (!layout.origin) return;
+    const pts: Vec3[] = [layout.origin, ...layout.hops.map((h) => h.pos)].map((p) => rotateY(p, rotation));
+    rig.frame(pts, opts.reducedMotion);
+    if (opts.reducedMotion) fadeStart = now;
+  };
+
+  const project = (p: Vec3): { x: number; y: number; inFrustum: boolean } => {
+    const v = new Vector3(...p).project(rig.camera);
+    return {
+      x: ((v.x + 1) / 2) * size.w,
+      y: ((1 - v.y) / 2) * size.h,
+      inFrustum: Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 && v.z >= -1 && v.z <= 1,
+    };
+  };
+
+  return {
+    scene,
+    rig,
+    renderer,
+    setState: (s) => {
+      if (s === state) return;
+      state = s;
+      layout = globeLayout(s);
+      infos = nodeInfos(s, layout);
+      arcList = arcInfos(layout);
+    },
+    update: (dtMs, nowMs) => {
+      now = nowMs;
+      if (state.status !== "running" && !opts.reducedMotion) rotation += (IDLE_ROTATION * dtMs) / 1000;
+      poses = poseSource({ layout, nowMs, dtMs, reducedMotion: opts.reducedMotion, rotationY: rotation });
+      reframe();
+      rig.update(dtMs);
+      updateLight();
+      dots.mesh.rotation.y = rotation;
+      shell.surface.rotation.y = rotation;
+      dots.update(nowMs);
+      dots.setPixelWorld(pixelWorld());
+      nodes.update(poses, infos, nowMs, opts.reducedMotion);
+      arcs.update(poses, arcList, nowMs, opts.reducedMotion);
+      bloom.sample(dtMs);
+      if (fadeStart !== null) {
+        const k = Math.min((nowMs - fadeStart) / REDUCED_FADE_MS, 1);
+        opts.canvas.style.opacity = String(REDUCED_FADE_FLOOR + (1 - REDUCED_FADE_FLOOR) * k);
+        if (k >= 1) fadeStart = null;
+      }
+    },
+    render: () => bloom.render(),
+    resize: (w, h, dpr) => {
+      size = { w, h };
+      renderer.setPixelRatio(dpr);
+      renderer.setSize(w, h, false);
+      rig.resize(w / h);
+      backdrop.setAspect(w / h);
+      arcs.setResolution(w, h, dpr);
+      stars.setPixelRatio(dpr);
+      bloom.setSize(w, h);
+    },
+    poses: () => poses,
+    trace: () => projectFrame(now, poses, project),
+    setPoseSource: (s) => { poseSource = s; },
+    setGlobeOpacity: (o) => {
+      shell.setOpacity(o);
+      dots.setOpacity(o);
+      arcs.setOpacity(o);
+    },
+    bloomTier: () => bloom.tier(),
+    dispose: () => {
+      nodes.dispose();
+      arcs.dispose();
+      dots.dispose();
+      shell.dispose();
+      stars.dispose();
+      backdrop.dispose();
+      bloom.dispose();
+      renderer.dispose();
+    },
+  };
+};

@@ -64,6 +64,11 @@ describe("stepGlobePoses", () => {
     expect([...stepGlobePoses(s, input(layout([]), 16)).poses.keys()]).toEqual([ORIGIN_KEY]);
   });
 
+  it("emits no origin pose when the layout has none", () => {
+    const { poses } = stepGlobePoses(emptyPoseState, input({ origin: null, hops: [] }, 0));
+    expect(poses.size).toBe(0);
+  });
+
   it("applies the globe rotation to world positions", () => {
     const { poses } = stepGlobePoses(emptyPoseState, input(layout([]), 0, 16, { rotationY: Math.PI / 2 }));
     const p = poses.get(ORIGIN_KEY)!.pos; // (1,0,0) rotated +90° about y → (0,0,-1)

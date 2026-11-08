@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { angularDistance, latLonToVec3 } from "../geo";
-import { fitDistance, frameTarget, springStep } from "./camera";
+import { clampLatitude, fitDistance, frameTarget, springStep } from "./camera";
 
 describe("springStep (critically damped)", () => {
   it("converges to the target without overshoot", () => {
@@ -27,7 +27,13 @@ describe("frameTarget", () => {
 
   it("looks at the midpoint between origin and newest hop", () => {
     const { dir } = frameTarget([a, b]);
-    expect(angularDistance(dir, a)).toBeCloseTo(angularDistance(dir, b), 9);
+    expect(angularDistance(dir, a)).toBeCloseTo(angularDistance(dir, b), 2);
+  });
+
+  it("centres on the route's extent, not on where hops cluster", () => {
+    const cluster = Array.from({ length: 6 }, () => a);
+    const { dir } = frameTarget([...cluster, b]);
+    expect(angularDistance(dir, a)).toBeCloseTo(angularDistance(dir, b), 2);
   });
 
   it("pulls back further for wider spans", () => {
@@ -36,6 +42,13 @@ describe("frameTarget", () => {
     const huge = frameTarget([a, latLonToVec3(-33, 151)]).distance;
     expect(near).toBeLessThan(far);
     expect(far).toBeLessThan(huge);
+  });
+
+  it("frames the whole route, not just its ends", () => {
+    const via = [latLonToVec3(40, -74), latLonToVec3(51, 0), latLonToVec3(19, 73), latLonToVec3(35, 140)];
+    const { dir } = frameTarget(via);
+    const ends = frameTarget([via[0]!, via[3]!]);
+    expect(angularDistance(dir, via[2]!)).toBeLessThan(angularDistance(ends.dir, via[2]!));
   });
 
   it("falls back to the newest point for antipodal pairs", () => {
@@ -48,5 +61,14 @@ describe("fitDistance", () => {
   it("leaves landscape views alone and backs off on narrow portrait ones", () => {
     expect(fitDistance(3, 16 / 9, 35)).toBe(3);
     expect(fitDistance(3, 375 / 812, 35)).toBeGreaterThan(3);
+  });
+});
+
+describe("clampLatitude", () => {
+  it("keeps longitude and limits latitude so north stays up", () => {
+    const d = clampLatitude(latLonToVec3(85, 40), 50);
+    expect(angularDistance(d, latLonToVec3(50, 40))).toBeLessThan(1e-9);
+    expect(angularDistance(clampLatitude(latLonToVec3(-70, -10), 50), latLonToVec3(-50, -10))).toBeLessThan(1e-9);
+    expect(clampLatitude(latLonToVec3(20, 5), 50)).toEqual(latLonToVec3(20, 5));
   });
 });

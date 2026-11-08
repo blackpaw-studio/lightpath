@@ -41,6 +41,11 @@ describe("globeLayout", () => {
     expect(globeLayout(state([hop(1)], null)).origin).toEqual(latLonToVec3(0, 0));
   });
 
+  it("has no origin (nothing to draw) before any trace", () => {
+    expect(globeLayout(initialState)).toEqual({ origin: null, hops: [] });
+    expect(globeLayout(state([], { ...origin, lat: null, lon: null })).origin).toBeNull();
+  });
+
   it("colours by mean RTT and flags timeout-only hops", () => {
     const l = globeLayout(state([
       hop(1, { probes: [{ ip: "a", rttMs: 70 }, { ip: "a", rttMs: 90 }, { ip: null, rttMs: null }] }),
