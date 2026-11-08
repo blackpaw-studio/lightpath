@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "recordedAt": "2026-11-07T22:00:00Z",
+  "events": [
+    { "t": 0, "event": { "type": "trace.started", "target": "example.com", "resolvedIp": null,
+        "origin": { "publicIp": null, "lat": null, "lon": null, "city": null, "asn": null, "org": null } } },
+    { "t": 120, "event": { "type": "hop", "ttl": 1, "probes": [], "ip": null, "host": null, "asn": null, "org": null,
+        "lat": null, "lon": null, "city": null, "geoSource": "local", "annotations": [] } },
+    { "t": 340, "event": { "type": "hop.update", "ttl": 1, "asn": 15169 } },
+    { "t": 340, "event": { "type": "trace.done", "reached": true } }
+  ]
+}
