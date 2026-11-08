@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func okBatchHandler(hdr map[string]string) func(r recordedReq) (*http.Response, error) {
@@ -242,7 +243,7 @@ func TestIPAPI429BlocksThenRetries(t *testing.T) {
 	}
 }
 
-func TestIPAPICallerDeadlineReturnsEmptyWhileBatchPending(t *testing.T) {
+func TestIPAPIDropsIPsWhoseCallersAllGaveUp(t *testing.T) {
 	h := newFakeHTTP(okBatchHandler(nil))
 	clk := newFakeClock()
 	a := newTestIPAPI(t, h, clk)
@@ -259,15 +260,241 @@ func TestIPAPICallerDeadlineReturnsEmptyWhileBatchPending(t *testing.T) {
 	if ok := <-done; ok {
 		t.Fatal("lookup must return empty when the caller gives up")
 	}
-	if h.count() != 0 {
-		t.Fatalf("batch sent early (count %d)", h.count())
+	// A live lookup joins the same window; the abandoned IP is not sent.
+	live := a.enqueue(netip.MustParseAddr("1.1.1.1"))
+	clk.Advance(batchWindow)
+	req := h.next(t)
+	<-live.done
+	var ips []string
+	_ = json.Unmarshal([]byte(req.Body), &ips)
+	if len(ips) != 1 || ips[0] != "1.1.1.1" {
+		t.Errorf("batch = %v, want only the live IP", ips)
 	}
-	// The batch still completes and warms the cache for later hops.
+}
+
+// exhaustTokens spends n tokens with full (immediately flushed) batches and
+// discards the recorded requests from h.seen.
+func exhaustTokens(t *testing.T, a *IPAPI, h *fakeHTTP, n int) {
+	t.Helper()
+	for round := 0; round < n; round++ {
+		calls := make([]*call, maxBatch)
+		for i := range calls {
+			calls[i] = a.enqueue(addrN(10000 + round*maxBatch + i))
+		}
+		for _, c := range calls {
+			<-c.done
+		}
+	}
+	for range n {
+		h.next(t)
+	}
+}
+
+func batchIPs(t *testing.T, r recordedReq) []string {
+	t.Helper()
+	var ips []string
+	if err := json.Unmarshal([]byte(r.Body), &ips); err != nil {
+		t.Fatalf("bad batch body %q: %v", r.Body, err)
+	}
+	return ips
+}
+
+func TestIPAPIMergesIPsQueuedWhileWaitingForAToken(t *testing.T) {
+	h := newFakeHTTP(okBatchHandler(nil))
+	clk := newFakeClock()
+	a := newTestIPAPI(t, h, clk)
+	exhaustTokens(t, a, h, requestsPerIv)
+
+	first := a.enqueue(netip.MustParseAddr("9.9.9.1"))
+	clk.Await(t, batchWindow)
+	clk.Advance(batchWindow)
+	wait := clk.AwaitOther(t, batchWindow, DefaultTimeout)
+	// Hops arriving while the sender waits for a token join its batch.
+	second := a.enqueue(netip.MustParseAddr("9.9.9.2"))
+	third := a.enqueue(netip.MustParseAddr("9.9.9.3"))
+	clk.Advance(wait)
+	req := h.next(t)
+	for _, c := range []*call{first, second, third} {
+		<-c.done
+	}
+	if got := batchIPs(t, req); len(got) != 3 {
+		t.Errorf("batch = %v, want all three IPs in one request", got)
+	}
+	if h.count() != requestsPerIv+1 {
+		t.Errorf("requests = %d, want %d", h.count(), requestsPerIv+1)
+	}
+}
+
+// selfGate makes Self (GET) requests wait for release and answer with hdr;
+// batch (POST) requests answer immediately with batchHdr.
+type selfGate struct {
+	release  chan map[string]string
+	batchHdr map[string]string
+}
+
+func (g *selfGate) handle(r recordedReq) (*http.Response, error) {
+	if r.Method == http.MethodGet {
+		hdr := <-g.release
+		return httpResp(200, `{"status":"success","query":"203.0.113.9","lat":1,"lon":2,"city":"X"}`, hdr), nil
+	}
+	return okBatchHandler(g.batchHdr)(r)
+}
+
+func TestIPAPIRechecksXRlBlockAfterWaitingForAToken(t *testing.T) {
+	g := &selfGate{release: make(chan map[string]string)}
+	h := newFakeHTTP(g.handle)
+	clk := newFakeClock()
+	a := newTestIPAPI(t, h, clk)
+	exhaustTokens(t, a, h, requestsPerIv-1)
+
+	selfDone := make(chan struct{})
+	go func() {
+		a.Self(t.Context()) // spends the last token, then hangs server-side
+		close(selfDone)
+	}()
+	h.next(t)
+	pending := a.enqueue(netip.MustParseAddr("9.9.9.1"))
+	clk.Await(t, batchWindow)
+	clk.Advance(batchWindow)
+	wait := clk.AwaitOther(t, batchWindow, DefaultTimeout, requestTimeout)
+	// While the batch sleeps for a token, Self reports the quota is gone.
+	g.release <- map[string]string{"X-Rl": "0", "X-Ttl": "30"}
+	<-selfDone
+	clk.Advance(wait)
+	// The batch must now sit out the rest of the X-Ttl block, not send.
+	clk.Await(t, 30*time.Second-wait) // block began at release, T0+250ms
+	if h.count() != requestsPerIv {
+		t.Fatalf("batch sent during an X-Rl:0 block (requests %d)", h.count())
+	}
+	clk.Advance(30 * time.Second)
+	<-pending.done
+	if h.count() != requestsPerIv+1 {
+		t.Errorf("requests = %d, want %d", h.count(), requestsPerIv+1)
+	}
+}
+
+func TestIPAPIBlocksWhenXRlDoesNotCoverInflightRequests(t *testing.T) {
+	g := &selfGate{release: make(chan map[string]string, 1), batchHdr: map[string]string{"X-Rl": "1", "X-Ttl": "30"}}
+	h := newFakeHTTP(g.handle)
+	clk := newFakeClock()
+	a := newTestIPAPI(t, h, clk)
+
+	go a.Self(t.Context()) // in flight for the whole test
+	h.next(t)
+	t.Cleanup(func() { g.release <- nil })
+
+	first := a.enqueue(netip.MustParseAddr("9.9.9.1"))
+	clk.Await(t, batchWindow)
+	clk.Advance(batchWindow)
+	<-first.done // X-Rl:1, but the outstanding Self request will use it
+
+	second := a.enqueue(netip.MustParseAddr("9.9.9.2"))
+	clk.Await(t, batchWindow)
+	clk.Advance(batchWindow)
+	clk.Await(t, 30*time.Second-batchWindow)
+	if h.count() != 2 {
+		t.Fatalf("request sent although X-Rl did not cover in-flight requests (count %d)", h.count())
+	}
+	clk.Advance(30 * time.Second)
+	<-second.done
+}
+
+func TestIPAPICountsDownXRlBetweenResponses(t *testing.T) {
+	var n atomic.Int32
+	h := newFakeHTTP(func(r recordedReq) (*http.Response, error) {
+		hdr := map[string]string{"X-Rl": "9", "X-Ttl": "60"}
+		if n.Add(1) == 1 {
+			hdr = map[string]string{"X-Rl": "1", "X-Ttl": "30"}
+		}
+		return okBatchHandler(hdr)(r)
+	})
+	clk := newFakeClock()
+	a := newTestIPAPI(t, h, clk)
+	gen := 0
+	round := func() {
+		gen++
+		c := a.enqueue(addrN(gen))
+		clk.Await(t, batchWindow)
+		clk.Advance(batchWindow)
+		<-c.done
+	}
+	round() // X-Rl:1 → one request left in this window
+	round() // uses it
+	third := a.enqueue(addrN(99))
+	clk.Await(t, batchWindow)
+	clk.Advance(batchWindow)
+	clk.Await(t, 30*time.Second-2*batchWindow)
+	if h.count() != 2 {
+		t.Fatalf("third request sent after X-Rl was used up (count %d)", h.count())
+	}
+	clk.Advance(30 * time.Second)
+	<-third.done
+}
+
+func TestIPAPIBatchRequestTimesOut(t *testing.T) {
+	var n atomic.Int32
+	h := newFakeHTTP(func(r recordedReq) (*http.Response, error) {
+		if n.Add(1) == 1 {
+			<-r.Ctx.Done() // hung connection
+			return nil, r.Ctx.Err()
+		}
+		return okBatchHandler(nil)(r)
+	})
+	clk := newFakeClock()
+	a := newTestIPAPI(t, h, clk)
+	c := a.enqueue(netip.MustParseAddr("8.8.8.8"))
+	clk.Await(t, batchWindow)
 	clk.Advance(batchWindow)
 	h.next(t)
-	geo, ok := a.Lookup(t.Context(), netip.MustParseAddr("8.8.8.8"))
-	if !ok || geo.City != "Chicago" {
-		t.Errorf("late result not cached: %+v ok=%v", geo, ok)
+	clk.Await(t, requestTimeout)
+	clk.Advance(requestTimeout)
+	<-c.done
+	if c.ok {
+		t.Fatal("a timed-out request must yield no result")
+	}
+	// The sender is free again.
+	c = a.enqueue(netip.MustParseAddr("8.8.8.8"))
+	clk.Await(t, batchWindow)
+	clk.Advance(batchWindow)
+	<-c.done
+	if !c.ok {
+		t.Error("request after a timeout should succeed")
+	}
+}
+
+func TestIPAPISelfRequestTimesOut(t *testing.T) {
+	h := newFakeHTTP(func(r recordedReq) (*http.Response, error) {
+		<-r.Ctx.Done()
+		return nil, r.Ctx.Err()
+	})
+	clk := newFakeClock()
+	a := newTestIPAPI(t, h, clk)
+	done := make(chan bool, 1)
+	go func() {
+		_, _, ok := a.Self(context.Background())
+		done <- ok
+	}()
+	h.next(t)
+	clk.Await(t, requestTimeout)
+	clk.Advance(requestTimeout)
+	if <-done {
+		t.Error("Self must fail when its request hangs")
+	}
+}
+
+func TestIPAPICapsCityLength(t *testing.T) {
+	long := strings.Repeat("é", 200) // 400 bytes
+	h := newFakeHTTP(func(r recordedReq) (*http.Response, error) {
+		return httpResp(200, `[{"status":"success","query":"8.8.8.8","lat":1,"lon":2,"city":"`+long+`"}]`, nil), nil
+	})
+	clk := newFakeClock()
+	a := newTestIPAPI(t, h, clk)
+	c := a.enqueue(netip.MustParseAddr("8.8.8.8"))
+	clk.Await(t, batchWindow)
+	clk.Advance(batchWindow)
+	<-c.done
+	if len(c.geo.City) > maxFieldBytes || !utf8.ValidString(c.geo.City) || c.geo.City == "" {
+		t.Errorf("city len %d valid=%v", len(c.geo.City), utf8.ValidString(c.geo.City))
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"time"
+	"unicode/utf8"
 )
 
 // DefaultTimeout bounds each individual enrichment lookup.
@@ -16,6 +17,8 @@ const DefaultTimeout = 2 * time.Second
 type Clock interface {
 	Now() time.Time
 	After(d time.Duration) <-chan time.Time
+	// Timer is After with a stop function that releases the timer early.
+	Timer(d time.Duration) (<-chan time.Time, func())
 }
 
 // HTTPDoer is the subset of *http.Client the package uses.
@@ -27,6 +30,10 @@ type realClock struct{}
 
 func (realClock) Now() time.Time                         { return time.Now() }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+func (realClock) Timer(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTimer(d)
+	return t.C, func() { t.Stop() }
+}
 
 // RealClock is the wall clock.
 var RealClock Clock = realClock{}
@@ -34,8 +41,9 @@ var RealClock Clock = realClock{}
 // withTimeout is context.WithTimeout driven by an injected Clock.
 func withTimeout(ctx context.Context, clk Clock, d time.Duration) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(ctx)
-	timer := clk.After(d)
+	timer, stop := clk.Timer(d)
 	go func() {
+		defer stop()
 		select {
 		case <-timer:
 			cancel()
@@ -43,4 +51,19 @@ func withTimeout(ctx context.Context, clk Clock, d time.Duration) (context.Conte
 		}
 	}()
 	return ctx, cancel
+}
+
+// maxFieldBytes caps hostnames, cities and org names taken from the network.
+const maxFieldBytes = 256
+
+// capField truncates s to maxFieldBytes without splitting a UTF-8 sequence.
+func capField(s string) string {
+	if len(s) <= maxFieldBytes {
+		return s
+	}
+	cut := maxFieldBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }

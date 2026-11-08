@@ -184,7 +184,7 @@ func parseASName(txt []string) (string, bool) {
 	for _, rec := range txt {
 		parts := splitTXT(rec)
 		if len(parts) >= 5 && parts[4] != "" {
-			return parts[4], true
+			return capField(parts[4]), true
 		}
 	}
 	return "", false

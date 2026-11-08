@@ -38,6 +38,12 @@ func (c *fakeClock) Now() time.Time {
 }
 
 func (c *fakeClock) After(d time.Duration) <-chan time.Time {
+	ch, _ := c.Timer(d)
+	return ch
+}
+
+// Timer registers a timer; stop removes it from the pending set.
+func (c *fakeClock) Timer(d time.Duration) (<-chan time.Time, func()) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	w := &fakeWaiter{at: c.now.Add(d), dur: d, ch: make(chan time.Time, 1)}
@@ -47,7 +53,11 @@ func (c *fakeClock) After(d time.Duration) <-chan time.Time {
 	}
 	c.waiters = append(c.waiters, w)
 	c.cond.Broadcast()
-	return w.ch
+	return w.ch, func() {
+		c.mu.Lock()
+		w.fired = true
+		c.mu.Unlock()
+	}
 }
 
 // Advance moves time forward and fires every timer that is now due.
@@ -171,6 +181,7 @@ type recordedReq struct {
 	Method string
 	URL    string
 	Body   string
+	Ctx    context.Context
 }
 
 func newFakeHTTP(fn func(r recordedReq) (*http.Response, error)) *fakeHTTP {
@@ -183,7 +194,7 @@ func (f *fakeHTTP) Do(req *http.Request) (*http.Response, error) {
 		b, _ := io.ReadAll(req.Body)
 		body = string(b)
 	}
-	rr := recordedReq{Method: req.Method, URL: req.URL.String(), Body: body}
+	rr := recordedReq{Method: req.Method, URL: req.URL.String(), Body: body, Ctx: req.Context()}
 	f.mu.Lock()
 	f.reqs = append(f.reqs, rr)
 	f.mu.Unlock()

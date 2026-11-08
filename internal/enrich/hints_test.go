@@ -22,7 +22,7 @@ func TestHintFor(t *testing.T) {
 		{"example.com", ""},
 		{"", ""},
 		{"chcgil09.example.net", "Chicago"}, // carrier codes are specific enough alone
-		{"be2.nyc.example.net", "New York"},  // metro codes the spec names
+		{"be2.nyc.example.net", "New York"}, // metro codes the spec names
 		{"ae-3.cr2.ash1.example.net", "Ashburn"},
 		{"xe-1-0.lon2.example.net", "London"},
 		{"be10.par3.example.net", "Paris"},

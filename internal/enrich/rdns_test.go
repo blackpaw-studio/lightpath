@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -56,5 +57,14 @@ func TestRDNSTimesOut(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("lookup did not return after the timeout")
+	}
+}
+
+func TestRDNSCapsNameLength(t *testing.T) {
+	long := strings.Repeat("a", 300) + ".example."
+	r := NewRDNS(fakeAddr{names: map[string][]string{"1.1.1.1": {long}}}, newFakeClock())
+	got, ok := r.Lookup(t.Context(), netip.MustParseAddr("1.1.1.1"))
+	if !ok || len(got) != maxFieldBytes {
+		t.Errorf("len = %d ok=%v, want %d", len(got), ok, maxFieldBytes)
 	}
 }

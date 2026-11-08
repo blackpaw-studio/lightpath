@@ -32,6 +32,6 @@ func (r *RDNS) Lookup(ctx context.Context, addr netip.Addr) (string, bool) {
 	if err != nil || len(names) == 0 {
 		return "", false
 	}
-	name := strings.TrimSuffix(names[0], ".")
+	name := capField(strings.TrimSuffix(names[0], "."))
 	return name, name != ""
 }

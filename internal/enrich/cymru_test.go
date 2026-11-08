@@ -45,6 +45,10 @@ func TestParseASName(t *testing.T) {
 	if !ok || got != "GOOGLE, US" {
 		t.Errorf("got (%q,%v)", got, ok)
 	}
+	long, _ := parseASName([]string{"1 | US | arin | 2000-03-30 | " + strings.Repeat("X", 400)})
+	if len(long) != maxFieldBytes {
+		t.Errorf("org len = %d, want %d", len(long), maxFieldBytes)
+	}
 	if _, ok := parseASName([]string{"15169 | US | arin"}); ok {
 		t.Error("short record should not parse")
 	}
