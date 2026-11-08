@@ -1,0 +1,7 @@
+/lightpath
+ui/node_modules/
+ui/dist/*
+!ui/dist/.gitkeep
+ui/playwright-report/
+ui/test-results/
+.DS_Store

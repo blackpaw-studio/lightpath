@@ -1,0 +1,1 @@
+{"type":"hop","ttl":3,"probes":[{"ip":"198.51.100.1","rttMs":12.5},{"ip":"198.51.100.1","rttMs":13.1},{"ip":"198.51.100.2","rttMs":null}],"ip":"198.51.100.1","host":"ae-1.r21.chcgil09.us.bb.example.net","asn":64501,"org":"EXAMPLE-BB","lat":41.88,"lon":-87.63,"city":"Chicago","geoSource":"hostname","annotations":["!H"]}
