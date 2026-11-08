@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { angularDistance, latLonToVec3, type Vec3 } from "../geo";
 import type { GlobeLayout } from "./layout";
-import { appearance, APPEAR_MS, emptyPoseState, ORIGIN_KEY, stepGlobePoses, type PoseInput } from "./globePoses";
+import { appearance, APPEAR_MS, createGlobePoseSource, emptyPoseState, ORIGIN_KEY, stepGlobePoses, type PoseInput } from "./globePoses";
 
 const layout = (hops: [number, Vec3][], generation = 1): GlobeLayout => ({
   generation,
@@ -89,5 +89,31 @@ describe("stepGlobePoses", () => {
     const p = poses.get(ORIGIN_KEY)!.pos; // (1,0,0) rotated +90° about y → (0,0,-1)
     expect(p[0]).toBeCloseTo(0, 12);
     expect(p[2]).toBeCloseTo(-1, 12);
+  });
+});
+
+describe("createGlobePoseSource", () => {
+  const a = latLonToVec3(10, 10);
+  const b = latLonToVec3(10, 60);
+  const frames = [0, 16, 32, 48].map((t, i) => input(layout(i < 2 ? [[1, a]] : [[1, b]]), t));
+
+  it("produces the same poses as stepping the pure function", () => {
+    const source = createGlobePoseSource();
+    let s = emptyPoseState;
+    for (const f of frames) {
+      const r = stepGlobePoses(s, f);
+      s = r.state;
+      expect([...source(f)]).toEqual([...r.poses]);
+    }
+  });
+
+  it("double-buffers its maps: the previous frame's map stays intact, then is reused", () => {
+    const source = createGlobePoseSource();
+    const m0 = source(frames[0]!);
+    const snapshot = [...m0];
+    const m1 = source(frames[1]!);
+    expect(m1).not.toBe(m0);
+    expect([...m0]).toEqual(snapshot);
+    expect(source(frames[2]!)).toBe(m0);
   });
 });
