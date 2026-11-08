@@ -2,8 +2,8 @@
 // frame), shaded with flowing ring lines, longitudinal lanes and light packets
 // racing toward the destination, tinted by RTT along its length and fogged.
 import {
-  AdditiveBlending, BackSide, ClampToEdgeWrapping, Curve, DataTexture, Group, LinearFilter, Matrix4, Mesh, RGBAFormat,
-  ShaderMaterial, SRGBColorSpace, TubeGeometry, Vector3,
+  AdditiveBlending, BackSide, CircleGeometry, ClampToEdgeWrapping, Curve, DataTexture, DoubleSide, Group, LinearFilter,
+  Matrix4, Mesh, Quaternion, RGBAFormat, ShaderMaterial, SRGBColorSpace, TubeGeometry, Vector3,
 } from "three";
 import type { Vec3 } from "../geo";
 import { helixLocal, type TunnelFrame, type TunnelGate } from "./tunnelLayout";
@@ -25,6 +25,25 @@ class HelixCurve extends Curve<Vector3> {
     return target.set(...helixLocal(t * this.length));
   }
 }
+
+/** Cap overlap past the wall, so the 64-gon cap leaves no sliver against the 64-gon tube. */
+const CAP_OVERSIZE = 1.02;
+
+/**
+ * Disc closing the tube's far end (tunnel-local frame). The tube is open-ended,
+ * and without this the screen-space backdrop's bright core shows through the
+ * end as a hard-edged disc at the vanishing point. UV u = 1 so the fill
+ * samples the tail's tint.
+ */
+export const endCapGeometry = (length: number): CircleGeometry => {
+  const curve = new HelixCurve(length);
+  const geometry = new CircleGeometry(TUBE_R * CAP_OVERSIZE, RADIAL_SEGMENTS);
+  const uv = geometry.getAttribute("uv");
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, 1, 0.5);
+  geometry.applyQuaternion(new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), curve.getTangent(1)));
+  geometry.translate(...helixLocal(length));
+  return geometry;
+};
 
 const vertex = /* glsl */ `
   varying vec2 vUv;
@@ -81,7 +100,12 @@ const fragment = /* glsl */ `
     // Faint wall so the tube reads as a volume, brighter at grazing angles far down it.
     // Linear light: sRGB output lifts 0.01 to ~25/255, so keep this tiny.
     float wall = 0.002 + 0.008 * smoothstep(0.3, 3.0, dist);
+  #ifdef END_CAP
+    // The far cap carries only the wall's faint glow: no grid lines on a flat disc.
+    float light = wall;
+  #else
     float light = wall + rings * 0.4 + lanes * 0.18 + packet * 1.8 * uMotion + lanes * 0.08 * (1.0 - uMotion);
+  #endif
     gl_FragColor = vec4(base * light * fog * near * uOpacity, 1.0);
   }
 `;
@@ -160,10 +184,20 @@ export const createTunnel = (): Tunnel => {
   const geometry0 = new TubeGeometry(new HelixCurve(1), 8, TUBE_R, 8);
   const fill = new Mesh(geometry0, fillMaterial);
   const mesh = new Mesh(geometry0, material);
-  fill.renderOrder = 1;
-  mesh.renderOrder = 2;
-  fill.frustumCulled = mesh.frustumCulled = false;
-  group.add(fill, mesh);
+  // The cap is seen from inside the tube, facing whichever way the helix ends: draw both sides.
+  const capMaterial = fillMaterial.clone();
+  capMaterial.side = DoubleSide;
+  capMaterial.uniforms = fillMaterial.uniforms;
+  const capGlowMaterial = material.clone();
+  capGlowMaterial.side = DoubleSide;
+  capGlowMaterial.defines = { END_CAP: "" };
+  capGlowMaterial.uniforms = material.uniforms;
+  const cap = new Mesh(endCapGeometry(1), capMaterial);
+  const capGlow = new Mesh(cap.geometry, capGlowMaterial);
+  fill.renderOrder = cap.renderOrder = 1;
+  mesh.renderOrder = capGlow.renderOrder = 2;
+  fill.frustumCulled = mesh.frustumCulled = cap.frustumCulled = capGlow.frustumCulled = false;
+  group.add(fill, cap, mesh, capGlow);
   let builtLength = 0;
   let gates: readonly TunnelGate[] = [];
 
@@ -171,6 +205,8 @@ export const createTunnel = (): Tunnel => {
     mesh.geometry.dispose();
     mesh.geometry = new TubeGeometry(new HelixCurve(length), Math.ceil(length * SEGMENTS_PER_UNIT), TUBE_R, RADIAL_SEGMENTS, false);
     fill.geometry = mesh.geometry;
+    cap.geometry.dispose();
+    cap.geometry = capGlow.geometry = endCapGeometry(length);
     builtLength = length;
     material.uniforms.uLength!.value = length;
   };
@@ -197,8 +233,11 @@ export const createTunnel = (): Tunnel => {
     },
     dispose: () => {
       mesh.geometry.dispose();
+      cap.geometry.dispose();
       material.dispose();
       fillMaterial.dispose();
+      capMaterial.dispose();
+      capGlowMaterial.dispose();
       ramp.dispose();
     },
   };
