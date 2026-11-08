@@ -1,0 +1,356 @@
+{
+  "version": 1,
+  "recordedAt": "2026-11-08T04:02:28.760323Z",
+  "events": [
+    {
+      "t": 6,
+      "event": {
+        "type": "trace.started",
+        "target": "1.1.1.1",
+        "resolvedIp": "1.1.1.1",
+        "origin": {
+          "publicIp": "71.247.247.75",
+          "lat": 40.6472,
+          "lon": -73.9405,
+          "city": "Brooklyn",
+          "asn": 701,
+          "org": "UUNET - Verizon Business, US"
+        }
+      }
+    },
+    {
+      "t": 7,
+      "event": {
+        "type": "hop",
+        "ttl": 1,
+        "probes": [
+          {
+            "ip": "10.0.4.1",
+            "rttMs": 0.724
+          },
+          {
+            "ip": "10.0.4.1",
+            "rttMs": 0.26
+          },
+          {
+            "ip": "10.0.4.1",
+            "rttMs": 0.25
+          }
+        ],
+        "ip": "10.0.4.1",
+        "host": null,
+        "asn": null,
+        "org": null,
+        "lat": 40.6472,
+        "lon": -73.9405,
+        "city": "Brooklyn",
+        "geoSource": "local",
+        "annotations": []
+      }
+    },
+    {
+      "t": 33,
+      "event": {
+        "type": "hop",
+        "ttl": 2,
+        "probes": [
+          {
+            "ip": "96.250.220.1",
+            "rttMs": 12.313
+          },
+          {
+            "ip": "96.250.220.1",
+            "rttMs": 6.722
+          },
+          {
+            "ip": "96.250.220.1",
+            "rttMs": 7.023
+          }
+        ],
+        "ip": "96.250.220.1",
+        "host": null,
+        "asn": null,
+        "org": null,
+        "lat": null,
+        "lon": null,
+        "city": null,
+        "geoSource": "estimated",
+        "annotations": []
+      }
+    },
+    {
+      "t": 38,
+      "event": {
+        "city": "New York",
+        "geoSource": "hostname",
+        "host": "lo0-100.nycmny-vfttp-379.verizon-gni.net",
+        "lat": 40.71,
+        "lon": -74.01,
+        "ttl": 2,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 43,
+      "event": {
+        "type": "hop",
+        "ttl": 3,
+        "probes": [
+          {
+            "ip": "100.41.23.64",
+            "rttMs": 3.486
+          },
+          {
+            "ip": "100.41.23.66",
+            "rttMs": 3.678
+          },
+          {
+            "ip": "100.41.23.66",
+            "rttMs": 2.806
+          }
+        ],
+        "ip": "100.41.23.64",
+        "host": null,
+        "asn": null,
+        "org": null,
+        "lat": null,
+        "lon": null,
+        "city": null,
+        "geoSource": "estimated",
+        "annotations": []
+      }
+    },
+    {
+      "t": 60,
+      "event": {
+        "asn": 701,
+        "org": "UUNET - Verizon Business, US",
+        "ttl": 2,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 72,
+      "event": {
+        "asn": 701,
+        "org": "UUNET - Verizon Business, US",
+        "ttl": 3,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 297,
+      "event": {
+        "city": "Boston",
+        "geoSource": "api",
+        "lat": 42.3601,
+        "lon": -71.0589,
+        "ttl": 3,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 6357,
+      "event": {
+        "type": "hop",
+        "ttl": 4,
+        "probes": [
+          {
+            "ip": null,
+            "rttMs": null
+          },
+          {
+            "ip": null,
+            "rttMs": null
+          },
+          {
+            "ip": null,
+            "rttMs": null
+          }
+        ],
+        "ip": null,
+        "host": null,
+        "asn": null,
+        "org": null,
+        "lat": null,
+        "lon": null,
+        "city": null,
+        "geoSource": "estimated",
+        "annotations": []
+      }
+    },
+    {
+      "t": 10576,
+      "event": {
+        "type": "hop",
+        "ttl": 5,
+        "probes": [
+          {
+            "ip": null,
+            "rttMs": null
+          },
+          {
+            "ip": "152.193.5.194",
+            "rttMs": 8.772
+          },
+          {
+            "ip": null,
+            "rttMs": null
+          }
+        ],
+        "ip": "152.193.5.194",
+        "host": null,
+        "asn": null,
+        "org": null,
+        "lat": null,
+        "lon": null,
+        "city": null,
+        "geoSource": "estimated",
+        "annotations": []
+      }
+    },
+    {
+      "t": 10592,
+      "event": {
+        "host": "customer.alter.net",
+        "ttl": 5,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 10607,
+      "event": {
+        "asn": 701,
+        "org": "UUNET - Verizon Business, US",
+        "ttl": 5,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 10622,
+      "event": {
+        "type": "hop",
+        "ttl": 6,
+        "probes": [
+          {
+            "ip": "162.158.61.101",
+            "rttMs": 35.649
+          },
+          {
+            "ip": "162.158.61.125",
+            "rttMs": 4.249
+          },
+          {
+            "ip": "162.158.61.117",
+            "rttMs": 5.908
+          }
+        ],
+        "ip": "162.158.61.101",
+        "host": null,
+        "asn": null,
+        "org": null,
+        "lat": null,
+        "lon": null,
+        "city": null,
+        "geoSource": "estimated",
+        "annotations": []
+      }
+    },
+    {
+      "t": 10639,
+      "event": {
+        "type": "hop",
+        "ttl": 7,
+        "probes": [
+          {
+            "ip": "1.1.1.1",
+            "rttMs": 4.976
+          },
+          {
+            "ip": "1.1.1.1",
+            "rttMs": 6.076
+          },
+          {
+            "ip": "1.1.1.1",
+            "rttMs": 6.306
+          }
+        ],
+        "ip": "1.1.1.1",
+        "host": null,
+        "asn": null,
+        "org": null,
+        "lat": null,
+        "lon": null,
+        "city": null,
+        "geoSource": "estimated",
+        "annotations": []
+      }
+    },
+    {
+      "t": 10650,
+      "event": {
+        "host": "one.one.one.one",
+        "ttl": 7,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 10660,
+      "event": {
+        "asn": 13335,
+        "org": "CLOUDFLARENET - Cloudflare, Inc., US",
+        "ttl": 6,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 10660,
+      "event": {
+        "asn": 13335,
+        "org": "CLOUDFLARENET - Cloudflare, Inc., US",
+        "ttl": 7,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 10851,
+      "event": {
+        "city": "South Brisbane",
+        "geoSource": "api",
+        "lat": -27.4766,
+        "lon": 153.0166,
+        "ttl": 7,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 10851,
+      "event": {
+        "city": "Newark",
+        "geoSource": "api",
+        "lat": 40.7337,
+        "lon": -74.1941,
+        "ttl": 5,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 10851,
+      "event": {
+        "city": "Newark",
+        "geoSource": "api",
+        "lat": 40.7356,
+        "lon": -74.1723,
+        "ttl": 6,
+        "type": "hop.update"
+      }
+    },
+    {
+      "t": 10851,
+      "event": {
+        "type": "trace.done",
+        "reached": true
+      }
+    }
+  ]
+}
