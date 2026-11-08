@@ -11,6 +11,13 @@ import { FIXTURES } from "./e2e/agents";
 // macOS against committed darwin baselines (see e2e/harness.ts).
 const remote = Boolean(process.env.PW_TEST_CONNECT_WS_ENDPOINT);
 
+// Headless Firefox has no WebGL on Linux (Mozilla bug 1375585), so the scene never
+// starts. CI runs it headed under xvfb (`xvfb-run`) with LIGHTPATH_E2E_FIREFOX_HEADED=1;
+// software GL (llvmpipe) then provides the context. macOS headless Firefox has WebGL.
+const firefoxLaunch = process.env.LIGHTPATH_E2E_FIREFOX_HEADED
+  ? { headless: false, launchOptions: { firefoxUserPrefs: { "webgl.force-enabled": true, "webgl.disabled": false } } }
+  : {};
+
 const desktop = { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 };
 
 export default defineConfig({
@@ -38,6 +45,6 @@ export default defineConfig({
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"], ...desktop } },
     { name: "webkit", use: { ...devices["Desktop Safari"], ...desktop } },
-    ...(remote ? [] : [{ name: "firefox", use: { ...devices["Desktop Firefox"], ...desktop } }]),
+    ...(remote ? [] : [{ name: "firefox", use: { ...devices["Desktop Firefox"], ...desktop, ...firefoxLaunch } }]),
   ],
 });
