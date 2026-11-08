@@ -28,6 +28,9 @@ Orchestrator's tracking list. Each item says where it gets resolved.
   - The Cymru /24 cache can be coarse.
   - The cache is wiped whole at 4096 entries.
   - A restarted agent starts with a full rate bucket.
+  - The token bucket would allow about 29 requests in the first minute if X-Rl headers were absent.
+  - A fully abandoned batch still spends a token.
+  - `trace.done` can be sent without `trace.started` when traceroute exits 0 with no output.
   - The runner's output pipe can be held open by descendant processes. This needs atypical traceroute behaviour.
   - Replay fixture size and event count are unbounded. The fixture is CLI-selected, so it is trusted input.
 - **M2-H review #1 (scene reset on disconnect)** → M3 wiring:
