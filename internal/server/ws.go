@@ -22,6 +22,7 @@ const (
 	msgInvalidTarget = "target must be an IP address or an RFC 1123 hostname"
 	msgBadMessage    = "malformed message"
 	msgTraceFailed   = "trace failed"
+	msgBusy          = "too many traces are running; try again shortly"
 )
 
 func (h *handler) serveWS(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +31,16 @@ func (h *handler) serveWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	if !h.life.begin() {
+		http.Error(w, "shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	defer h.life.end()
+	if h.ctx.Err() != nil || !h.conns.tryAcquire() {
+		http.Error(w, "too many connections", http.StatusServiceUnavailable)
+		return
+	}
+	defer h.conns.release()
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// Defence in depth behind CheckUpgrade; full origins include the scheme.
 		OriginPatterns:  allowedOrigins(h.port),
@@ -63,7 +74,7 @@ type session struct {
 }
 
 func newSession(h *handler, conn *websocket.Conn) *session {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(h.ctx)
 	closed := make(chan struct{})
 	close(closed)
 	return &session{h: h, conn: conn, ctx: ctx, cancel: cancel, out: make(chan outItem, outBuffer), prevDone: closed}
@@ -132,8 +143,13 @@ func (s *session) startTrace(target string) {
 		if ctx.Err() != nil {
 			return
 		}
+		if !s.h.traces.tryAcquire() {
+			s.send(ctx, protocol.Error{Code: protocol.ErrBusy, Message: msgBusy})
+			return
+		}
 		em := &orderedEmitter{s: s, ctx: ctx}
 		err := s.h.source.Trace(ctx, target, em.emit)
+		s.h.traces.release() // only now has the source (and its child process) returned
 		em.flush()
 		if err != nil && ctx.Err() == nil {
 			s.h.log.Error("trace failed", "err", err)

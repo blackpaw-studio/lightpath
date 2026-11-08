@@ -26,6 +26,7 @@ const (
 	ErrTracerouteMissing ErrorCode = "traceroute_missing"
 	ErrTracerouteFailed  ErrorCode = "traceroute_failed"
 	ErrBusyReplay        ErrorCode = "busy_replay"
+	ErrBusy              ErrorCode = "busy" // server-wide trace limit reached
 )
 
 // Message type discriminators.

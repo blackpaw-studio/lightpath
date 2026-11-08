@@ -41,9 +41,15 @@ type harness struct {
 
 func newHarness(t *testing.T, src TraceSource) *harness {
 	t.Helper()
+	return newHarnessCfg(t, Config{Source: src})
+}
+
+func newHarnessCfg(t *testing.T, cfg Config) *harness {
+	t.Helper()
 	srv := httptest.NewUnstartedServer(nil)
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
-	h, err := New(Config{Port: port, Source: src, Validate: validateExceptBad})
+	cfg.Port, cfg.Validate = port, validateExceptBad
+	h, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,12 +318,154 @@ func TestWSRejectsBadOriginAndHostWith403(t *testing.T) {
 func TestNewValidatesConfig(t *testing.T) {
 	src := fakeSource(func(context.Context, string, func(protocol.ServerMsg)) error { return nil })
 	for name, cfg := range map[string]Config{
-		"no port":      {Source: src, Validate: validateExceptBad},
-		"no source":    {Port: 1, Validate: validateExceptBad},
-		"no validator": {Port: 1, Source: src},
+		"no port":         {Source: src, Validate: validateExceptBad},
+		"no source":       {Port: 1, Validate: validateExceptBad},
+		"no validator":    {Port: 1, Source: src},
+		"negative traces": {Port: 1, Source: src, Validate: validateExceptBad, MaxTraces: -1},
+		"negative conns":  {Port: 1, Source: src, Validate: validateExceptBad, MaxConns: -1},
 	} {
 		if _, err := New(cfg); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+// gatedSource blocks every trace until release is closed (or ctx ends), and
+// reports each trace's start and full return.
+type gatedSource struct {
+	release  chan struct{}
+	started  chan string
+	returned chan string
+}
+
+func newGatedSource() *gatedSource {
+	return &gatedSource{release: make(chan struct{}), started: make(chan string, 16), returned: make(chan string, 16)}
+}
+
+func (g *gatedSource) Trace(ctx context.Context, target string, emit func(protocol.ServerMsg)) error {
+	defer func() { g.returned <- target }()
+	emit(protocol.TraceStarted{Target: target})
+	g.started <- target
+	select {
+	case <-g.release:
+		emit(protocol.TraceDone{Reached: true})
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestTraceLimitIsServerWideAndRepliesBusy(t *testing.T) {
+	g := newGatedSource()
+	h := newHarnessCfg(t, Config{Source: g, MaxTraces: 2})
+	a, b, c := h.dial(), h.dial(), h.dial()
+	h.send(a, `{"type":"trace.start","target":"a.example"}`)
+	h.send(b, `{"type":"trace.start","target":"b.example"}`)
+	<-g.started
+	<-g.started
+
+	h.send(c, `{"type":"trace.start","target":"c.example"}`)
+	m, ok := h.recv(c).(protocol.Error)
+	if !ok || m.Code != protocol.ErrBusy {
+		t.Fatalf("want busy error, got %#v", m)
+	}
+	select {
+	case got := <-g.started:
+		t.Fatalf("source ran %q beyond the limit", got)
+	default:
+	}
+
+	close(g.release) // a and b finish; slots free up
+	h.recv(a)        // started
+	h.recv(a)        // done
+	<-g.returned
+	<-g.returned
+	h.send(c, `{"type":"trace.start","target":"c.example"}`)
+	if _, ok := h.recv(c).(protocol.TraceStarted); !ok {
+		t.Fatal("slot was not released after traces returned")
+	}
+}
+
+func TestTraceSlotHeldUntilSourceFullyReturns(t *testing.T) {
+	stopping := make(chan struct{})
+	finish := make(chan struct{})
+	started := make(chan struct{}, 2)
+	src := fakeSource(func(ctx context.Context, target string, emit func(protocol.ServerMsg)) error {
+		emit(protocol.TraceStarted{Target: target})
+		started <- struct{}{}
+		if target != "slow.example" {
+			return nil
+		}
+		<-ctx.Done()
+		close(stopping)
+		<-finish // slow teardown: the child process is still alive
+		return ctx.Err()
+	})
+	h := newHarnessCfg(t, Config{Source: src, MaxTraces: 1})
+	a, b := h.dial(), h.dial()
+	h.send(a, `{"type":"trace.start","target":"slow.example"}`)
+	h.recv(a)
+	<-started
+	h.send(a, `{"type":"trace.cancel"}`)
+	<-stopping
+
+	h.send(b, `{"type":"trace.start","target":"b.example"}`)
+	if m, ok := h.recv(b).(protocol.Error); !ok || m.Code != protocol.ErrBusy {
+		t.Fatalf("slot freed before the source returned: %#v", m)
+	}
+	close(finish)
+}
+
+func TestConnectionCapRefusesExtraSockets(t *testing.T) {
+	h := newHarnessCfg(t, Config{Source: newGatedSource(), MaxConns: 2})
+	h.dial()
+	h.dial()
+	hdr := http.Header{}
+	hdr.Set("Origin", "http://127.0.0.1:"+strconv.Itoa(h.port))
+	_, resp, err := websocket.Dial(h.ctx, "ws://127.0.0.1:"+strconv.Itoa(h.port)+"/ws", &websocket.DialOptions{HTTPHeader: hdr})
+	if err == nil {
+		t.Fatal("third connection was accepted")
+	}
+	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %v", resp)
+	}
+}
+
+func TestShutdownContextClosesSocketsAndWaitsForTraces(t *testing.T) {
+	g := newGatedSource()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := newHarnessCfg(t, Config{Source: g, Context: ctx})
+	srv := h.srv.Config.Handler.(*Server)
+	c := h.dial()
+	h.send(c, `{"type":"trace.start","target":"a.example"}`)
+	<-g.started
+
+	cancel()
+	if err := srv.Wait(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-g.returned: // Wait only returns once the source has returned
+	default:
+		t.Fatal("Wait returned before the trace source returned")
+	}
+	if _, _, err := c.Read(h.ctx); err == nil {
+		t.Fatal("socket was left open")
+	}
+}
+
+func TestNoSessionsAfterWaitBegins(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	h := newHarnessCfg(t, Config{Source: newGatedSource(), Context: ctx})
+	cancel()
+	if err := h.srv.Config.Handler.(*Server).Wait(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	hdr := http.Header{}
+	hdr.Set("Origin", "http://127.0.0.1:"+strconv.Itoa(h.port))
+	_, resp, err := websocket.Dial(h.ctx, "ws://127.0.0.1:"+strconv.Itoa(h.port)+"/ws", &websocket.DialOptions{HTTPHeader: hdr})
+	if err == nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 while shutting down, got %v %v", resp, err)
 	}
 }

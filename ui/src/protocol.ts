@@ -7,7 +7,8 @@ export type ErrorCode =
   | "bad_message"
   | "traceroute_missing"
   | "traceroute_failed"
-  | "busy_replay";
+  | "busy_replay"
+  | "busy";
 
 export interface Probe {
   ip: string | null;
@@ -45,7 +46,7 @@ export type ServerMsg =
 
 const GEO_SOURCES: readonly string[] = ["api", "hostname", "local", "estimated"];
 const ERROR_CODES: readonly string[] = [
-  "invalid_target", "bad_message", "traceroute_missing", "traceroute_failed", "busy_replay",
+  "invalid_target", "bad_message", "traceroute_missing", "traceroute_failed", "busy_replay", "busy",
 ];
 
 type Obj = Record<string, unknown>;
