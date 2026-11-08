@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 )
 
 type GeoSource string
@@ -110,18 +111,17 @@ func (HopUpdate) serverMsg()    {}
 func (TraceDone) serverMsg()    {}
 func (Error) serverMsg()        {}
 
-var hopUpdateFields = map[string]bool{
-	"ip": true, "host": true, "asn": true, "org": true, "lat": true,
-	"lon": true, "city": true, "geoSource": true, "annotations": true,
-}
-
-// NewHopUpdate returns an update for ttl containing a copy of fields.
-func NewHopUpdate(ttl int, fields map[string]any) HopUpdate {
+// NewHopUpdate returns an update for ttl containing a copy of fields. Keys
+// must be Hop JSON names other than "ttl" and "probes".
+func NewHopUpdate(ttl int, fields map[string]any) (HopUpdate, error) {
 	u := HopUpdate{"type": TypeHopUpdate, "ttl": ttl}
 	for k, v := range fields {
+		if _, ok := hopUpdateChecks[k]; !ok {
+			return nil, fmt.Errorf("protocol: hop.update cannot carry %q", k)
+		}
 		u[k] = v
 	}
-	return u
+	return u, nil
 }
 
 func marshalTyped(typ string, v any) ([]byte, error) {
@@ -193,7 +193,8 @@ func peekType(data []byte) (string, error) {
 }
 
 // strict unmarshals data into v, rejecting unknown fields other than the
-// "type" discriminator.
+// "type" discriminator, missing fields, nulls in non-pointer fields and
+// (for types with a validate method) invalid values.
 func strict(data []byte, v any) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -208,6 +209,12 @@ func strict(data []byte, v any) error {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return fmt.Errorf("protocol: %w", err)
+	}
+	if err := requireFields(rest, reflect.TypeOf(v).Elem(), reflect.TypeOf(v).Elem().Name()); err != nil {
+		return err
+	}
+	if val, ok := v.(interface{ validate() error }); ok {
+		return val.validate()
 	}
 	return nil
 }
@@ -274,6 +281,9 @@ func decodeHopUpdate(data []byte) (ServerMsg, error) {
 	if !ok {
 		return nil, errors.New("protocol: hop.update missing ttl")
 	}
+	if isNull(rawTTL) {
+		return nil, errors.New("protocol: hop.update ttl is null")
+	}
 	if err := json.Unmarshal(rawTTL, &ttl); err != nil {
 		return nil, fmt.Errorf("protocol: hop.update ttl: %w", err)
 	}
@@ -282,14 +292,15 @@ func decodeHopUpdate(data []byte) (ServerMsg, error) {
 		if k == "type" || k == "ttl" {
 			continue
 		}
-		if !hopUpdateFields[k] {
+		check, ok := hopUpdateChecks[k]
+		if !ok {
 			return nil, fmt.Errorf("protocol: hop.update has unknown field %q", k)
 		}
-		var val any
-		if err := json.Unmarshal(v, &val); err != nil {
+		val, err := check(v)
+		if err != nil {
 			return nil, fmt.Errorf("protocol: hop.update %s: %w", k, err)
 		}
 		fields[k] = val
 	}
-	return NewHopUpdate(ttl, fields), nil
+	return NewHopUpdate(ttl, fields)
 }

@@ -134,7 +134,7 @@ func TestLateASNUpdateCarriesOnlyASNAndOrg(t *testing.T) {
 	wait := r.enricher().Enrich(t.Context(), hopAt(4, "8.8.8.8"), r.out.emit)
 	r.asn.open()
 	msgs := r.out.waitFor(t, 2)
-	want := protocol.NewHopUpdate(4, map[string]any{"asn": 64500, "org": "EXAMPLE-NET"})
+	want := mustHopUpdate(t, 4, map[string]any{"asn": 64500, "org": "EXAMPLE-NET"})
 	if !reflect.DeepEqual(msgs[1], protocol.ServerMsg(want)) {
 		t.Errorf("update = %#v, want %#v", msgs[1], want)
 	}
@@ -152,7 +152,7 @@ func TestRDNSUpdateCarriesOnlyHost(t *testing.T) {
 	wait := r.enricher().Enrich(t.Context(), hopAt(4, "8.8.8.8"), r.out.emit)
 	r.host.open()
 	msgs := r.out.waitFor(t, 2)
-	want := protocol.NewHopUpdate(4, map[string]any{"host": "dns.google"})
+	want := mustHopUpdate(t, 4, map[string]any{"host": "dns.google"})
 	if !reflect.DeepEqual(msgs[1], protocol.ServerMsg(want)) {
 		t.Errorf("update = %#v, want %#v", msgs[1], want)
 	}
@@ -174,7 +174,7 @@ func TestHostnameHintOverridesAPIWhenAPIArrivesFirst(t *testing.T) {
 
 	r.geo.open()
 	msgs := r.out.waitFor(t, 2)
-	wantAPI := protocol.NewHopUpdate(6, map[string]any{
+	wantAPI := mustHopUpdate(t, 6, map[string]any{
 		"lat": 52.37, "lon": 4.90, "city": "Amsterdam", "geoSource": protocol.GeoAPI,
 	})
 	if !reflect.DeepEqual(msgs[1], protocol.ServerMsg(wantAPI)) {
@@ -184,7 +184,7 @@ func TestHostnameHintOverridesAPIWhenAPIArrivesFirst(t *testing.T) {
 	r.host.open()
 	msgs = r.out.waitFor(t, 3)
 	fra := iataHints["fra"]
-	wantHint := protocol.NewHopUpdate(6, map[string]any{
+	wantHint := mustHopUpdate(t, 6, map[string]any{
 		"host": fraHost, "lat": fra.Lat, "lon": fra.Lon, "city": fra.City, "geoSource": protocol.GeoHostname,
 	})
 	if !reflect.DeepEqual(msgs[2], protocol.ServerMsg(wantHint)) {
@@ -203,7 +203,7 @@ func TestHostnameHintOverridesAPIWhenHostnameArrivesFirst(t *testing.T) {
 	r.host.open()
 	msgs := r.out.waitFor(t, 2)
 	fra := iataHints["fra"]
-	wantHint := protocol.NewHopUpdate(6, map[string]any{
+	wantHint := mustHopUpdate(t, 6, map[string]any{
 		"host": fraHost, "lat": fra.Lat, "lon": fra.Lon, "city": fra.City, "geoSource": protocol.GeoHostname,
 	})
 	if !reflect.DeepEqual(msgs[1], protocol.ServerMsg(wantHint)) {
@@ -253,7 +253,7 @@ func TestLocalHopTakesOriginLocationAndSkipsRemoteLookups(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("messages = %v", msgs)
 	}
-	want := protocol.NewHopUpdate(1, map[string]any{"host": "gateway.fra.lan.example.net"})
+	want := mustHopUpdate(t, 1, map[string]any{"host": "gateway.fra.lan.example.net"})
 	if !reflect.DeepEqual(msgs[1], protocol.ServerMsg(want)) {
 		t.Errorf("update = %#v, want only host", msgs[1])
 	}
@@ -269,7 +269,7 @@ func TestLocalHopWaitsForOriginWhenNotYetKnown(t *testing.T) {
 	if hop := msgs[0].(protocol.Hop); hop.GeoSource != protocol.GeoEstimated {
 		t.Fatalf("hop before origin known = %+v", hop)
 	}
-	want := protocol.NewHopUpdate(1, map[string]any{
+	want := mustHopUpdate(t, 1, map[string]any{
 		"lat": 40.7, "lon": -74.0, "city": "New York", "geoSource": protocol.GeoLocal,
 	})
 	if len(msgs) != 2 || !reflect.DeepEqual(msgs[1], protocol.ServerMsg(want)) {
@@ -319,4 +319,13 @@ func TestMutateDropsUpdatesAfterCancel(t *testing.T) {
 	if n := len(col.snapshot()); n != 1 {
 		t.Errorf("updates after cancel = %d, want none", n-1)
 	}
+}
+
+func mustHopUpdate(t *testing.T, ttl int, fields map[string]any) protocol.HopUpdate {
+	t.Helper()
+	u, err := protocol.NewHopUpdate(ttl, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }

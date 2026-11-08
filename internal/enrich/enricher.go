@@ -183,8 +183,11 @@ func (s *hopState) mutate(f func(ch change)) {
 	}
 	ch := change{}
 	f(ch)
-	if len(ch) > 0 {
-		s.emit(protocol.NewHopUpdate(s.hop.TTL, ch))
+	if len(ch) == 0 {
+		return
+	}
+	if u, err := protocol.NewHopUpdate(s.hop.TTL, ch); err == nil {
+		s.emit(u)
 	}
 }
 

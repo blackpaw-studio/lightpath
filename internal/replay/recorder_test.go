@@ -24,7 +24,7 @@ func recordedEvents(t *testing.T) (*fakeClock, *Recorder) {
 	clock.Advance(ms(120))
 	rec.Record(protocol.Hop{TTL: 1, GeoSource: protocol.GeoLocal})
 	clock.Advance(ms(220))
-	rec.Record(protocol.NewHopUpdate(1, map[string]any{"asn": 15169}))
+	rec.Record(mustHopUpdate(t, 1, map[string]any{"asn": 15169}))
 	rec.Record(protocol.TraceDone{Reached: true})
 	return clock, rec
 }
@@ -182,4 +182,13 @@ func TestWriteFileAtomicFailureKeepsOriginalAndCleansTemp(t *testing.T) {
 	if ents, _ := os.ReadDir(dir); len(ents) != 1 {
 		t.Fatalf("temp file left behind: %v", ents)
 	}
+}
+
+func mustHopUpdate(t *testing.T, ttl int, fields map[string]any) protocol.HopUpdate {
+	t.Helper()
+	u, err := protocol.NewHopUpdate(ttl, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }
