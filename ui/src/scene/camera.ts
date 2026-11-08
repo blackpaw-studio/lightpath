@@ -16,10 +16,13 @@ export const springStep = (s: SpringState, target: number, dtMs: number, omega: 
   return { x: target + (y + c * t) * decay, v: (s.v - omega * c * t) * decay };
 };
 
-export const IDLE_DISTANCE = 3.7;
-const NEAR_DISTANCE = 2.55;
-const FAR_DISTANCE = 4.1;
 export const FOV_DEG = 35;
+const NEAR_DISTANCE = 2.45;
+const MAX_DISTANCE = 12;
+/** Framed points stay within this fraction of the narrower half-FOV. */
+const FIT_MARGIN = 0.85;
+/** Angular radius used when nothing is framed: the whole globe. */
+const IDLE_SPAN = Math.PI / 2;
 
 const norm = (v: Vec3): Vec3 => {
   const l = Math.hypot(...v);
@@ -42,15 +45,13 @@ const capCentre = (points: readonly Vec3[], start: Vec3): Vec3 => {
   return c;
 };
 
-/** Camera direction (unit, from globe centre) at the centre of the route's extent, and a distance fitting its span. */
-export const frameTarget = (points: readonly Vec3[]): { dir: Vec3; distance: number } => {
+/** Camera direction (unit, from globe centre) at the centre of the route's extent, plus its angular radius. */
+export const frameTarget = (points: readonly Vec3[]): { dir: Vec3; span: number } => {
   const last = points[points.length - 1] ?? [0, 0, 1];
   const sum = points.reduce<Vec3>((a, p) => [a[0] + p[0], a[1] + p[1], a[2] + p[2]], [0, 0, 0]);
   // A centroid near zero means the route wraps the globe; just look at the newest hop.
   const dir = Math.hypot(...sum) < 1e-6 * Math.max(points.length, 1) ? last : capCentre(points, norm(sum));
-  const span = Math.max(...points.map((p) => angularDistance(dir, p)), 0);
-  const t = Math.min(span / (Math.PI / 2), 1);
-  return { dir, distance: NEAR_DISTANCE + (FAR_DISTANCE - NEAR_DISTANCE) * t };
+  return { dir, span: Math.max(...points.map((p) => angularDistance(dir, p)), 0) };
 };
 
 /** Limits a direction's latitude (keeping longitude) so the camera never looks straight down a pole. */
@@ -61,14 +62,23 @@ export const clampLatitude = (dir: Vec3, maxDeg: number): Vec3 => {
   return latLonToVec3(Math.sign(lat) * maxDeg, lon);
 };
 
-/** Backs off on portrait viewports so the framed span fits the narrow width. */
-export const fitDistance = (distance: number, aspect: number, fovDeg: number): number => {
-  if (aspect >= 1) return distance;
-  const vertical = Math.tan((fovDeg * Math.PI) / 360);
-  return distance * Math.min(vertical / (vertical * aspect), 2.4) ** 0.8;
+/**
+ * Camera distance from the globe centre so unit-sphere points at the given
+ * angles off the camera axis project inside the narrower half-FOV. Points
+ * past the limb (> 90°) count as the limb.
+ */
+export const fitDistance = (angles: readonly number[], aspect: number, fovDeg: number): number => {
+  const vHalf = (fovDeg * Math.PI) / 360;
+  const half = Math.min(vHalf, Math.atan(Math.tan(vHalf) * aspect)) * FIT_MARGIN;
+  const need = Math.max(...angles.map((a) => {
+    const t = Math.min(a, Math.PI / 2);
+    return Math.cos(t) + Math.sin(t) / Math.tan(half);
+  }), NEAR_DISTANCE);
+  return Math.min(need, MAX_DISTANCE);
 };
 
 const OMEGA = 2.6;
+const ZOOM_OUT_BOOST = 2.5;
 const ELEVATION = 0.12; // look slightly down on the framed point
 const MAX_CAMERA_LAT = 50;
 
@@ -84,14 +94,16 @@ export interface CameraRig {
 export const createCameraRig = (aspect: number): CameraRig => {
   const camera = new PerspectiveCamera(FOV_DEG, aspect, 0.01, 100);
   let currentAspect = aspect;
-  let target: { dir: Vec3; distance: number } = { dir: norm([0.55, 0.5, 0.75]), distance: IDLE_DISTANCE };
-  let springs: SpringState[] = [...target.dir, target.distance].map((x) => ({ x, v: 0 }));
+  let dir: Vec3 = norm([0.55, 0.5, 0.75]);
+  // Angles of the framed points off `dir`; the goal distance is refit whenever the aspect changes.
+  let angles: readonly number[] = [IDLE_SPAN];
+  const goals = (): number[] => [...dir, fitDistance(angles, currentAspect, FOV_DEG)];
+  let springs: SpringState[] = goals().map((x) => ({ x, v: 0 }));
 
   const apply = (): void => {
     const [x, y, z, d] = springs.map((s) => s.x) as [number, number, number, number];
-    const dir = norm([x, y, z]);
-    const dist = fitDistance(d, currentAspect, FOV_DEG);
-    camera.position.set(dir[0] * dist, dir[1] * dist, dir[2] * dist);
+    const n = norm([x, y, z]);
+    camera.position.set(n[0] * d, n[1] * d, n[2] * d);
     camera.lookAt(0, 0, 0);
   };
   apply();
@@ -100,13 +112,21 @@ export const createCameraRig = (aspect: number): CameraRig => {
     camera,
     frame: (points, instant) => {
       const f = frameTarget(points);
-      const lifted = clampLatitude(norm([f.dir[0], f.dir[1] + ELEVATION, f.dir[2]]), MAX_CAMERA_LAT);
-      target = { dir: lifted, distance: f.distance };
-      if (instant) springs = [...target.dir, target.distance].map((x) => ({ x, v: 0 }));
+      dir = clampLatitude(norm([f.dir[0], f.dir[1] + ELEVATION, f.dir[2]]), MAX_CAMERA_LAT);
+      angles = points.length > 0 ? points.map((p) => angularDistance(dir, p)) : [IDLE_SPAN];
+      if (instant) {
+        springs = goals().map((x) => ({ x, v: 0 }));
+        apply();
+      }
     },
     update: (dtMs) => {
-      const goals = [...target.dir, target.distance];
-      springs = springs.map((s, i) => springStep(s, goals[i]!, dtMs, OMEGA));
+      const g = goals();
+      // Zooming out outruns the pan so hops already in view never slide off-screen mid-move.
+      springs = springs.map((s, i) => {
+        const goal = g[i]!;
+        const omega = i === 3 && goal > s.x ? OMEGA * ZOOM_OUT_BOOST : OMEGA;
+        return springStep(s, goal, dtMs, omega);
+      });
       apply();
     },
     resize: (a) => {
