@@ -7,8 +7,10 @@ import type { TraceState } from "../reducer";
 
 /** Smallest gap between consecutive gates (world units). */
 export const MIN_GAP = 0.6;
-/** Gap per ms of RTT increase over the previous hop. */
+/** Extra gap per ms of RTT increase over the previous hop (a 60 ms ocean crossing adds 1.5). */
 export const RTT_GAP_K = 0.025;
+/** Most depth RTT may add over a whole route; past it every RTT gap scales down together. */
+export const MAX_RTT_DEPTH = 8;
 /** Helix radius, turn rate (rad per unit s), and the depth over which it eases in from the axis. */
 export const HELIX_R = 0.2;
 export const HELIX_OMEGA = (2 * Math.PI) / 7;
@@ -37,20 +39,20 @@ export interface TunnelFrame {
 }
 
 /**
- * Gate depths: s_i = s_{i-1} + max(MIN_GAP, k·max(0, rtt_i − rtt_{i-1})), from
- * the origin at s = 0 with RTT 0. A timeout (null) adds MIN_GAP and keeps the
- * last known RTT as the baseline for the next hop.
+ * Gate depths, ∝ RTT delta: s_i = s_{i-1} + MIN_GAP + k·max(0, rtt_i − rtt_{i-1}),
+ * from the origin at s = 0 with RTT 0. A timeout (null) adds MIN_GAP and keeps
+ * the last known RTT as the baseline for the next hop. When the RTT terms sum
+ * past maxRttDepth, k shrinks so they sum to exactly that (proportions kept).
  */
-export const gateSpacing = (rtts: readonly (number | null)[], minGap = MIN_GAP, k = RTT_GAP_K): number[] => {
-  const out: number[] = [];
-  let s = 0;
-  let base = 0;
-  for (const rtt of rtts) {
-    s += rtt === null ? minGap : Math.max(minGap, k * Math.max(0, rtt - base));
-    if (rtt !== null) base = rtt;
-    out.push(s);
-  }
-  return out;
+export const gateSpacing = (
+  rtts: readonly (number | null)[], minGap = MIN_GAP, k = RTT_GAP_K, maxRttDepth = MAX_RTT_DEPTH,
+): number[] => {
+  const deltas = rtts.reduce<{ base: number; out: number[] }>(({ base, out }, rtt) => (
+    rtt === null ? { base, out: [...out, 0] } : { base: rtt, out: [...out, Math.max(0, rtt - base)] }
+  ), { base: 0, out: [] }).out;
+  const total = deltas.reduce((a, b) => a + b, 0);
+  const kEff = total * k > maxRttDepth ? maxRttDepth / total : k;
+  return deltas.reduce<number[]>((acc, d) => [...acc, (acc[acc.length - 1] ?? 0) + minGap + kEff * d], []);
 };
 
 export const isTimeoutHop = (h: Hop): boolean => h.probes.every((p) => p.rttMs === null);

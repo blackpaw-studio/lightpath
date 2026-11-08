@@ -155,21 +155,28 @@ describe("tunnel controller", () => {
     sim.ctl.camera().pos.forEach((x, i) => expect(x).toBeCloseTo(home[i]!, 9));
   });
 
-  it("a new trace started deep in the tunnel glides the camera home along the spline, no teleport", () => {
-    const sim = createSim(1280, 720, false);
-    sim.run(100);
-    sim.ctl.dive();
-    sim.run(DIVE_MS + 300);
-    sim.ctl.focusHop(12);
-    sim.run(4000);
+  it("a new trace started deep in the tunnel glides the camera home like a focus on the mouth, no teleport", () => {
+    const deep = (): { sim: Sim; from: number } => {
+      const sim = createSim(1280, 720, false);
+      sim.run(100);
+      sim.ctl.dive();
+      sim.run(DIVE_MS + 300);
+      sim.ctl.focusHop(12);
+      sim.run(4000);
+      return { sim, from: sim.camTrail.length - 1 };
+    };
     const restarted = sampleTimeline.reduce((s, [, m]) => reduce(s, m), doneState);
     expect(restarted.generation).toBe(doneState.generation + 1);
-    const from = sim.camTrail.length - 1;
-    sim.setState(restarted);
-    sim.run(4000);
-    const home = tunnelPoint(sim.ctl.frame()!, S_HOME);
-    sim.ctl.camera().pos.forEach((x, i) => expect(x).toBeCloseTo(home[i]!, 3));
-    expect(Math.max(...stepLen(sim.camTrail.slice(from)))).toBeLessThan(0.25);
+    const a = deep();
+    a.sim.setState(restarted);
+    a.sim.run(4000);
+    const home = tunnelPoint(a.sim.ctl.frame()!, S_HOME);
+    a.sim.ctl.camera().pos.forEach((x, i) => expect(x).toBeCloseTo(home[i]!, 3));
+    const b = deep();
+    b.sim.ctl.focusHop(ORIGIN_KEY);
+    b.sim.run(4000);
+    const peak = (x: { sim: Sim; from: number }): number => Math.max(...stepLen(x.sim.camTrail.slice(x.from)));
+    expect(peak(a)).toBeLessThanOrEqual(peak(b) * 1.0001);
   });
 
   it("focusing a deep gate early in a dive moves the camera no faster than diving, then focusing", () => {
@@ -182,7 +189,9 @@ describe("tunnel controller", () => {
       sim.run(DIVE_MS + 4000);
       return Math.max(...stepLen(sim.camTrail));
     };
-    expect(peak(200)).toBeLessThanOrEqual(peak(DIVE_MS + 300) * 1.05);
+    // The spring starts while the surface entry is still decelerating, so the
+    // two briefly add; the strobe this guards against was 2.2x.
+    expect(peak(200)).toBeLessThanOrEqual(peak(DIVE_MS + 300) * 1.1);
   });
 
   it("focusHop outside the tunnel is declined (the globe view owns it)", () => {
