@@ -60,6 +60,8 @@ type RecordingSource struct {
 	Inner Source
 	Clock Clock
 	Save  func(data []byte) error
+
+	saveMu sync.Mutex // concurrent traces must not interleave their saves
 }
 
 func (s *RecordingSource) Trace(ctx context.Context, target string, emit func(protocol.ServerMsg)) error {
@@ -70,7 +72,9 @@ func (s *RecordingSource) Trace(ctx context.Context, target string, emit func(pr
 	})
 	data, err := rec.Marshal()
 	if err == nil {
+		s.saveMu.Lock()
 		err = s.Save(data)
+		s.saveMu.Unlock()
 	}
 	if runErr != nil {
 		return runErr

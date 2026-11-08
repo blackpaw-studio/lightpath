@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/blackpaw-studio/lightpath/internal/protocol"
@@ -107,5 +111,75 @@ func TestRecordingSourcePropagatesInnerAndSaveErrors(t *testing.T) {
 	}
 	if err := src.Trace(context.Background(), "x", func(protocol.ServerMsg) {}); err == nil {
 		t.Fatal("expected save error")
+	}
+}
+
+func TestConcurrentRecordingsSaveOneAtATime(t *testing.T) {
+	var inFlight, overlaps, innerDone atomic.Int32
+	rs := &RecordingSource{
+		Inner: stubSource(func(context.Context, string, func(protocol.ServerMsg)) error {
+			innerDone.Add(1)
+			return nil
+		}),
+		Clock: newFakeClock(),
+		Save: func([]byte) error {
+			if inFlight.Add(1) > 1 {
+				overlaps.Add(1)
+			}
+			// Hold the first save open until both traces have finished, then
+			// yield so an unserialized second save would enter alongside it.
+			for innerDone.Load() < 2 {
+				runtime.Gosched()
+			}
+			for range 1000 {
+				runtime.Gosched()
+			}
+			inFlight.Add(-1)
+			return nil
+		},
+	}
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = rs.Trace(context.Background(), "x", func(protocol.ServerMsg) {}) }()
+	}
+	wg.Wait()
+	if overlaps.Load() != 0 {
+		t.Fatal("saves ran concurrently")
+	}
+}
+
+func TestWriteFileAtomicReplacesWholeFileAndLeavesNoTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out.json")
+	if err := WriteFileAtomic(path, []byte("old contents that are longer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFileAtomic(path, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "new" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode())
+	}
+	if ents, _ := os.ReadDir(dir); len(ents) != 1 {
+		t.Fatalf("stray files: %v", ents)
+	}
+}
+
+func TestWriteFileAtomicFailureKeepsOriginalAndCleansTemp(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "occupied")
+	if err := os.Mkdir(target, 0o700); err != nil { // rename onto a directory fails
+		t.Fatal(err)
+	}
+	if err := WriteFileAtomic(target, []byte("x"), 0o600); err == nil {
+		t.Fatal("expected error")
+	}
+	if ents, _ := os.ReadDir(dir); len(ents) != 1 {
+		t.Fatalf("temp file left behind: %v", ents)
 	}
 }
