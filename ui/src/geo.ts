@@ -15,8 +15,9 @@ export const scale = (a: Vec3, s: number): Vec3 => [a[0] * s, a[1] * s, a[2] * s
 export const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 export const normalize = (a: Vec3): Vec3 => scale(a, 1 / Math.hypot(...a));
 export const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+/** Exact at both ends (t = 0 → a, t = 1 → b). */
 export const lerp3 = (a: Vec3, b: Vec3, t: number): Vec3 =>
-  [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  [a[0] * (1 - t) + b[0] * t, a[1] * (1 - t) + b[1] * t, a[2] * (1 - t) + b[2] * t];
 
 /** Lat/lon in degrees → point on the unit sphere (y up, lon 0 along +x, east toward −z). */
 export const latLonToVec3 = (latDeg: number, lonDeg: number): Vec3 => {

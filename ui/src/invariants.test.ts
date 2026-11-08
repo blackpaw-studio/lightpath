@@ -102,6 +102,14 @@ describe("camera cuts", () => {
     expect(checkTrace(cutTrace(2), { ...opts, maxJumpWorld: 0.1 })).toEqual([]);
     expect(checkTrace(cutTrace(1), { ...opts, maxJumpWorld: 0.1 }).map((v) => v.kind)).toEqual(["jump"]);
   });
+  it("a cut restarts flicker tracking: visibility before it was seen by another camera", () => {
+    const vis = [true, true, false, true];
+    const fs: Frame[] = vis.map((visible, i) => ({
+      tMs: i * 16, cut: i === 2, entities: { n: { x: 0, y: 0, visible, world: [1, 0, 0] } },
+    }));
+    expect(checkTrace(fs, opts)).toEqual([]);
+    expect(checkTrace(fs.map((f) => ({ ...f, cut: false })), opts).map((v) => v.kind)).toEqual(["flicker"]);
+  });
   it("a cut never excuses a world-space teleport", () => {
     const fs: Frame[] = [0, 1].map((i) => ({
       tMs: i * 16, cut: i === 1, entities: { n: { x: i * 400, y: 0, visible: true, world: [i * 3, 0, 0] } },

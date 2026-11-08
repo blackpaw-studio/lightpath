@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { angularDistance, dot, latLonToVec3, normalize, scale, sub, type Vec3 } from "../geo";
 import { FOV_DEG } from "./camera";
 import {
-  cameraAt, DIVE_MS, easeInOutCubic, focusDepth, globeTransition, layerFades, modeOf, REDUCED_MS, rigUp, rotateBetween,
-  S_HOME, startTransition, stepTransition, T_SURFACE, TUNNEL_FOV, viewTOf, type CameraInput, type Transition,
+  cameraAt, DIVE_MS, easeInOutSine, focusDepth, globeTransition, layerFades, modeOf, rigUp, rotateBetween,
+  reducedShot, S_HOME, startTransition, stepTransition, T_SURFACE, TUNNEL_FOV, viewTOf, type CameraInput, type Transition,
 } from "./transition";
 import { tunnelFrame, tunnelPoint } from "./tunnelLayout";
 
@@ -17,12 +17,14 @@ const run = (t: Transition, ms: number, dt = 1000 / 60): Transition[] => {
 };
 
 describe("transition timeline", () => {
-  it("easeInOutCubic pins the ends and the midpoint", () => {
-    expect([easeInOutCubic(0), easeInOutCubic(0.5), easeInOutCubic(1)]).toEqual([0, 0.5, 1]);
+  it("easeInOutSine pins the ends and the midpoint", () => {
+    expect(easeInOutSine(0)).toBe(0);
+    expect(easeInOutSine(0.5)).toBeCloseTo(0.5, 12);
+    expect(easeInOutSine(1)).toBe(1);
   });
 
   it("dive runs viewT 0→1 monotonically over DIVE_MS, then settles in the tunnel", () => {
-    const frames = run(startTransition(globeTransition, 1, false), DIVE_MS);
+    const frames = run(startTransition(globeTransition, 1), DIVE_MS);
     const vs = frames.map(viewTOf);
     vs.slice(1).forEach((v, i) => expect(v).toBeGreaterThanOrEqual(vs[i]!));
     expect(vs[vs.length - 1]).toBeCloseTo(1, 9);
@@ -31,31 +33,34 @@ describe("transition timeline", () => {
   });
 
   it("surface replays the dive's viewT curve in reverse", () => {
-    const dive = run(startTransition(globeTransition, 1, false), DIVE_MS, 100).map(viewTOf);
-    const tunnel = run(startTransition(globeTransition, 1, false), DIVE_MS + 100).pop()!;
-    const surf = run(startTransition(tunnel, 0, false), DIVE_MS, 100).map(viewTOf);
+    const dive = run(startTransition(globeTransition, 1), DIVE_MS, 100).map(viewTOf);
+    const tunnel = run(startTransition(globeTransition, 1), DIVE_MS + 100).pop()!;
+    const surf = run(startTransition(tunnel, 0), DIVE_MS, 100).map(viewTOf);
     surf.forEach((v, i) => expect(v).toBeCloseTo(i + 1 < dive.length ? dive[dive.length - 2 - i]! : 0, 9));
-    expect(modeOf(run(startTransition(tunnel, 0, false), DIVE_MS + 100).pop()!)).toBe("globe");
+    expect(modeOf(run(startTransition(tunnel, 0), DIVE_MS + 100).pop()!)).toBe("globe");
   });
 
   it("reversing mid-dive continues from the current viewT (no jump)", () => {
-    const mid = run(startTransition(globeTransition, 1, false), 1000).pop()!;
-    const back = stepTransition(startTransition(mid, 0, false), 1000 / 60);
+    const mid = run(startTransition(globeTransition, 1), 1000).pop()!;
+    const back = stepTransition(startTransition(mid, 0), 1000 / 60);
     const fwd = stepTransition(mid, 1000 / 60);
     // One frame back moves exactly as far as one frame forward would have.
     expect(Math.abs(viewTOf(back) - viewTOf(mid))).toBeLessThanOrEqual(Math.abs(viewTOf(fwd) - viewTOf(mid)) * 1.01);
     expect(modeOf(back)).toBe("surfacing");
   });
 
-  it("reduced motion completes in REDUCED_MS and flags the camera cut once", () => {
-    const start = startTransition(globeTransition, 1, true);
-    const frames = run(start, REDUCED_MS);
-    expect(viewTOf(frames[frames.length - 1]!)).toBeCloseTo(1, 9);
-    expect(frames.map((f) => f.cut)).toEqual(frames.map((_, i) => i === 0));
+  it("reduced motion holds the overhead shot between the two resting shots", () => {
+    const dive = run(startTransition(globeTransition, 1), DIVE_MS);
+    expect(reducedShot(globeTransition)).toBe("globe");
+    expect(dive.slice(0, -1).every((t) => reducedShot(t) === "overhead")).toBe(true);
+    expect(reducedShot(dive[dive.length - 1]!)).toBe("tunnel");
+    const back = run(startTransition(dive[dive.length - 1]!, 0), DIVE_MS);
+    expect(back.slice(0, -1).every((t) => reducedShot(t) === "overhead")).toBe(true);
+    expect(reducedShot(back[back.length - 1]!)).toBe("globe");
   });
 
   it("starting toward the current target is a no-op", () => {
-    expect(startTransition(globeTransition, 0, false)).toBe(globeTransition);
+    expect(startTransition(globeTransition, 0)).toBe(globeTransition);
   });
 });
 
@@ -77,7 +82,7 @@ describe("cameraAt", () => {
   const rigPos: Vec3 = scale(normalize([0.2, 0.6, 0.8]), 3.4);
   const f0 = normalize(scale(rigPos, -1));
   const frame = tunnelFrame(origin, rotateBetween(f0, scale(origin, -1), rigUp(f0)));
-  const input: CameraInput = { rigPos, frame, camS: S_HOME };
+  const input: CameraInput = { rigPos, orbitR: 3.4, frame, camS: S_HOME };
 
   it("starts exactly at the globe rig pose", () => {
     const c = cameraAt(0, input);
@@ -101,7 +106,7 @@ describe("cameraAt", () => {
   // Rig 75° away from the origin and further out: the longest swing the globe rig can produce for a framed route.
   const farRig: Vec3 = scale(latLonToVec3(10, -150), 4.5);
   const farFrame = tunnelFrame(origin, rotateBetween(normalize(scale(farRig, -1)), scale(origin, -1), rigUp(normalize(scale(farRig, -1)))));
-  it.each([["near rig", input], ["far rig", { rigPos: farRig, frame: farFrame, camS: S_HOME }]] as const)(
+  it.each([["near rig", input], ["far rig", { rigPos: farRig, orbitR: 3.4, frame: farFrame, camS: S_HOME }]] as const)(
     "is continuous (%s): 1/600 viewT steps move position, view direction and roll by small bounded amounts", (_, inp) => {
     const poses = Array.from({ length: 601 }, (_, i) => cameraAt(i / 600, inp));
     const steps = poses.slice(1).map((c, i) => {
@@ -109,15 +114,16 @@ describe("cameraAt", () => {
       const fwd = (x: typeof c): Vec3 => normalize(sub(x.look, x.pos));
       return { pos: dist(c.pos, p.pos), dir: angularDistance(fwd(c), fwd(p)), up: angularDistance(c.up, p.up), fov: Math.abs(c.fovDeg - p.fovDeg) };
     });
-    // Path ≈ 3 world units over 600 steps (mean 0.005); no single step may spike.
-    expect(Math.max(...steps.map((s) => s.pos))).toBeLessThan(0.025);
+    // No single step may spike: the eased Catmull-Rom's peak speed stays within 4× its mean.
+    const mean = steps.reduce((a, s) => a + s.pos, 0) / steps.length;
+    expect(Math.max(...steps.map((s) => s.pos))).toBeLessThan(4 * mean);
     expect(Math.max(...steps.map((s) => s.dir))).toBeLessThan((1.5 * Math.PI) / 180);
     expect(Math.max(...steps.map((s) => s.up))).toBeLessThan((1.5 * Math.PI) / 180);
     expect(Math.max(...steps.map((s) => s.fov))).toBeLessThan(0.5);
   });
 
   it("keeps the camera outside the globe until the surface crossing", () => {
-    for (const inp of [input, { rigPos: farRig, frame: farFrame, camS: S_HOME }]) {
+    for (const inp of [input, { rigPos: farRig, orbitR: 3.4, frame: farFrame, camS: S_HOME }]) {
       for (let i = 0; i < 100; i++) {
         const v = (i / 100) * T_SURFACE;
         expect(Math.hypot(...cameraAt(v, inp).pos)).toBeGreaterThan(0.999);

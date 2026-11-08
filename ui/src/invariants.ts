@@ -8,9 +8,9 @@ export interface EntityFrame {
 export interface Frame {
   readonly tMs: number;
   /**
-   * The camera cut on this frame (reduced-motion crossfade). Screen positions
-   * are not comparable across a cut, so the screen jump check skips this frame;
-   * world-space and flicker checks still apply.
+   * The camera cut on this frame (reduced-motion crossfade). Screen position and
+   * frustum visibility are camera-relative, so a cut restarts the screen jump
+   * and flicker history; the world-space check runs straight through it.
    */
   readonly cut?: boolean;
   /** Entities absent from a frame count as not visible. */
@@ -42,6 +42,10 @@ const checkScreen = (id: string, frames: readonly Frame[], opts: TraceOptions): 
   let last: Seen | null = null;
   let prevVisible = false;
   frames.forEach((f, i) => {
+    if (f.cut === true) {
+      last = null;
+      prevVisible = false;
+    }
     const e = f.entities[id];
     if (e?.visible !== true) {
       prevVisible = false;
@@ -54,7 +58,7 @@ const checkScreen = (id: string, frames: readonly Frame[], opts: TraceOptions): 
     }
     if (last && prevVisible) {
       const d = Math.hypot(e.x - last.e.x, e.y - last.e.y);
-      if (d > opts.maxJumpPx && f.cut !== true) {
+      if (d > opts.maxJumpPx) {
         out.push({ kind: "jump", id, frame: i, detail: `${d.toFixed(1)}px > ${opts.maxJumpPx}px` });
       }
     } else if (last && f.tMs - last.tMs <= opts.flickerWindowMs) {
@@ -93,8 +97,9 @@ const checkWorld = (id: string, frames: readonly Frame[], limit: number): Violat
 };
 
 /**
- * Per-frame screen jumps above maxJumpPx (except on declared cuts), world-space
- * jumps above maxJumpWorld, and visible→hidden→visible within flickerWindowMs.
+ * Per-frame screen jumps above maxJumpPx, world-space jumps above maxJumpWorld,
+ * and visible→hidden→visible within flickerWindowMs. Declared cuts restart the
+ * screen-space history only.
  */
 export const checkTrace = (frames: readonly Frame[], opts: TraceOptions): Violation[] => {
   const ids = [...new Set(frames.flatMap((f) => Object.keys(f.entities)))];

@@ -9,6 +9,8 @@ export interface Pose {
   readonly pos: Vec3;
   readonly scale: number;
   readonly opacity: number;
+  /** 0 = globe node (glowing dot) … 1 = tunnel gate (ring). Set by the tunnel lane; absent means 0. */
+  readonly morph?: number;
 }
 /** Keyed by ttl; the origin uses ORIGIN_KEY. */
 export type PoseMap = ReadonlyMap<number, Pose>;

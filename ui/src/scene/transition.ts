@@ -3,13 +3,17 @@
 // viewT 0→1, Surface plays the same curves 1→0.
 import { add, cross, dot, lerp3, normalize, scale, slerpGreatCircle, sub, type Vec3 } from "../geo";
 import { FOV_DEG } from "./camera";
-import { easeInOutCubic, hermite, smoothstep } from "./easing";
+import { easeInOutSine, hermite, smoothstep } from "./easing";
 import { helixLocal, toWorld, tunnelPoint, type TunnelFrame } from "./tunnelLayout";
 
-export { easeInOutCubic } from "./easing";
+export { easeInOutSine } from "./easing";
 
 export const DIVE_MS = 2400;
-/** Reduced motion: no flight; a crossfade this long while poses still move continuously. */
+/**
+ * Reduced motion: the camera does not fly. It cuts between fixed poses (see
+ * reducedCameraAt), a crossfade this long masks each cut, and poses and fades
+ * still play the normal timeline so every hop moves continuously.
+ */
 export const REDUCED_MS = 400;
 export const TUNNEL_FOV = 58;
 /** Camera depth at the end of a dive: just past the origin node, framing hop 1's gate. */
@@ -21,8 +25,11 @@ export const LOOK_AHEAD = 1.4;
 export const T_SURFACE = 0.9;
 /** Camera speed (world units per unit viewT) when it crosses the surface. */
 const ENTRY_SPEED = 1;
-const SWING_RADIUS = 1.55;
-const SKIM_RADIUS = 1.12;
+/** viewT at which the camera has swung over the origin and starts descending the axis. */
+export const T_SWING = 0.38;
+const T_SKIM = 0.7;
+/** Altitude left at T_SKIM, as a fraction of the orbit altitude. */
+const SKIM_FRACTION = 0.2;
 const SNAP = 1e-9;
 
 export type ViewMode = "globe" | "diving" | "tunnel" | "surfacing";
@@ -32,26 +39,20 @@ export interface Transition {
   /** Linear time fraction of the current run, 0 (globe) … 1 (tunnel). */
   readonly progress: number;
   readonly target: ViewTarget;
-  /** This run uses the reduced-motion timing and camera cut. */
-  readonly reduced: boolean;
-  /** The camera cuts on this frame (reduced motion only). */
-  readonly cut: boolean;
-  readonly cutPending: boolean;
 }
 
-export const globeTransition: Transition = { progress: 0, target: 0, reduced: false, cut: false, cutPending: false };
+export const globeTransition: Transition = { progress: 0, target: 0 };
 
-export const startTransition = (t: Transition, target: ViewTarget, reduced: boolean): Transition =>
-  t.target === target ? t : { ...t, target, reduced, cutPending: reduced };
+export const startTransition = (t: Transition, target: ViewTarget): Transition =>
+  t.target === target ? t : { ...t, target };
 
 export const stepTransition = (t: Transition, dtMs: number): Transition => {
-  const rate = Math.max(dtMs, 0) / (t.reduced ? REDUCED_MS : DIVE_MS);
+  const rate = Math.max(dtMs, 0) / DIVE_MS;
   const raw = t.progress + (t.target === 1 ? rate : -rate);
-  const progress = raw >= 1 - SNAP ? 1 : raw <= SNAP ? 0 : raw;
-  return { ...t, progress, cut: t.cutPending, cutPending: false };
+  return { ...t, progress: raw >= 1 - SNAP ? 1 : raw <= SNAP ? 0 : raw };
 };
 
-export const viewTOf = (t: Transition): number => easeInOutCubic(t.progress);
+export const viewTOf = (t: Transition): number => easeInOutSine(t.progress);
 
 export const modeOf = (t: Transition): ViewMode => {
   if (t.target === 1) return t.progress >= 1 ? "tunnel" : "diving";
@@ -80,6 +81,8 @@ export const rigUp = (fwd: Vec3): Vec3 => normalize(sub([0, 1, 0], scale(fwd, fw
 export interface CameraInput {
   /** Live globe rig camera position (it always looks at the globe centre). */
   readonly rigPos: Vec3;
+  /** Camera distance during the swing; at least the distance that frames the whole globe. */
+  readonly orbitR: number;
   readonly frame: TunnelFrame;
   /** Camera depth along the tunnel while in it. */
   readonly camS: number;
@@ -118,15 +121,19 @@ const hermite3 = (keys: readonly Key[], m0: Vec3, mEnd: Vec3, t: number): Vec3 =
 
 const len = (v: Vec3): number => Math.hypot(...v);
 
-/** Flight keys from the rig pose to the origin node: swing over, hover, skim, enter. */
-const flightKeys = (rigPos: Vec3, origin: Vec3): Key[] => {
+/**
+ * Flight keys: rise to the orbit distance while swinging over the origin
+ * (looking at the globe centre, so the whole globe stays in frame), then
+ * descend straight down the tunnel axis onto the origin node.
+ */
+const flightKeys = (rigPos: Vec3, origin: Vec3, orbitR: number): Key[] => {
   const r = len(rigPos);
-  const swingDir = slerpGreatCircle(scale(rigPos, 1 / r), origin, 0.5);
+  const swingDir = slerpGreatCircle(scale(rigPos, 1 / r), origin, 0.45);
   return [
     { t: 0, p: rigPos },
-    { t: 0.22, p: scale(swingDir, r + (SWING_RADIUS - r) * 0.45) },
-    { t: 0.45, p: scale(origin, SWING_RADIUS) },
-    { t: 0.76, p: scale(origin, SKIM_RADIUS) },
+    { t: T_SWING / 2, p: scale(swingDir, r + (orbitR - r) * 0.6) },
+    { t: T_SWING, p: scale(origin, orbitR) },
+    { t: T_SKIM, p: scale(origin, 1 + (orbitR - 1) * SKIM_FRACTION) },
     { t: T_SURFACE, p: origin },
   ];
 };
@@ -139,9 +146,9 @@ const tunnelDepth = (viewT: number, camS: number): number => {
 };
 
 /** Camera pose at viewT ∈ [0,1]: 0 is exactly the globe rig, 1 is the tunnel camera at camS. */
-export const cameraAt = (viewT: number, { rigPos, frame, camS }: CameraInput): CameraPose => {
+export const cameraAt = (viewT: number, { rigPos, orbitR, frame, camS }: CameraInput): CameraPose => {
   const sCam = tunnelDepth(viewT, camS);
-  const keys = flightKeys(rigPos, frame.origin);
+  const keys = flightKeys(rigPos, frame.origin, Math.max(orbitR, len(rigPos)));
   const first = keys[1]!;
   const pos = viewT > T_SURFACE
     ? tunnelPoint(frame, sCam)
@@ -160,6 +167,22 @@ export const cameraAt = (viewT: number, { rigPos, frame, camS }: CameraInput): C
   const up = normalize(sub(blended, scale(fwd, dot(blended, fwd))));
   return { pos, look, up, fovDeg: FOV_DEG + (TUNNEL_FOV - FOV_DEG) * smoothstep(0.55, 1, viewT) };
 };
+
+export type ReducedShot = "globe" | "overhead" | "tunnel";
+
+/**
+ * Reduced-motion camera: the rig at rest on the globe, the tunnel camera at
+ * rest in the tunnel, and in between the overhead pose (above the origin, on
+ * the tunnel axis) from which hops are seen streaming into or out of the tunnel.
+ */
+export const reducedShot = (t: Transition): ReducedShot => {
+  if (t.progress >= 1 && t.target === 1) return "tunnel";
+  if (t.progress <= 0 && t.target === 0) return "globe";
+  return "overhead";
+};
+
+export const reducedCameraAt = (shot: ReducedShot, input: CameraInput): CameraPose =>
+  cameraAt(shot === "globe" ? 0 : shot === "tunnel" ? 1 : T_SWING, input);
 
 export interface LayerFades {
   readonly surface: number;
