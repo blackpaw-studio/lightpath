@@ -6,9 +6,9 @@ import type { TraceState } from "../reducer";
 import { initialState } from "../reducer";
 import type { Steppable } from "../loop";
 import { projectFrame, type TraceFrame } from "../testhooks";
-import { createGlobeShell } from "./atmosphere";
+import { createApertureUniforms, createGlobeShell } from "./atmosphere";
 import { createBackdrop } from "./backdrop";
-import { createBloom, type Bloom } from "./bloom";
+import { createBloom, type Bloom, type BloomLook } from "./bloom";
 import { createCameraRig, type CameraRig } from "./camera";
 import type { BloomTier } from "./frameBudget";
 import { createGlobePoseSource, ORIGIN_KEY, rotateY, type PoseMap, type PoseSource } from "./globePoses";
@@ -46,11 +46,26 @@ export interface GlobeView extends Steppable {
   setPoseSource(source: PoseSource): void;
   /** Fade globe body, atmosphere, land dots and arcs (tunnel transition). Nodes follow their poses. */
   setGlobeOpacity(opacity: number): void;
+  /** Fade each globe layer separately (the tunnel transition retires them at different times). */
+  setLayerOpacity(o: GlobeLayerOpacity): void;
+  /** Open a portal of `angle` radians in the globe body and land dots around world direction `dir` (0 closes it). */
+  setAperture(dir: Vec3, angle: number): void;
+  /** Hold the idle rotation (the tunnel is anchored to the globe while it is open). */
+  setRotationPaused(paused: boolean): void;
+  /** Bloom strength, radius and threshold (the tunnel wants a tighter glow than the globe). */
+  setBloomLook(look: BloomLook): void;
   bloomTier(): BloomTier;
   readonly scene: Scene;
   readonly rig: CameraRig;
   readonly renderer: WebGLRenderer;
   dispose(): void;
+}
+
+export interface GlobeLayerOpacity {
+  readonly surface: number;
+  readonly atmosphere: number;
+  readonly dots: number;
+  readonly arcs: number;
 }
 
 const nodeInfos = (state: TraceState, layout: GlobeLayout): Map<number, NodeInfo> => {
@@ -92,8 +107,9 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
   const scene = new Scene();
   scene.background = new Color("#02040a");
   const lightDir = new Vector3(-0.4, 0.6, 1).normalize();
-  const shell = createGlobeShell(lightDir);
-  const dots = createLandDots(opts.landDots, lightDir);
+  const aperture = createApertureUniforms();
+  const shell = createGlobeShell(lightDir, aperture);
+  const dots = createLandDots(opts.landDots, lightDir, aperture);
   const stars = createStars();
   stars.setPixelRatio(opts.pixelRatio);
   const backdrop = createBackdrop(opts.width / opts.height);
@@ -117,6 +133,7 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
   let now = 0;
   let lastFraming = "";
   let fadeStart: number | null = null;
+  let rotationPaused = false;
 
   const pixelWorld = (): number => {
     const cam = rig.camera;
@@ -165,7 +182,7 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     },
     update: (dtMs, nowMs) => {
       now = nowMs;
-      if (state.status !== "running" && !opts.reducedMotion) rotation += (IDLE_ROTATION * dtMs) / 1000;
+      if (state.status !== "running" && !opts.reducedMotion && !rotationPaused) rotation += (IDLE_ROTATION * dtMs) / 1000;
       poses = poseSource({ layout, nowMs, dtMs, reducedMotion: opts.reducedMotion, rotationY: rotation });
       reframe();
       rig.update(dtMs);
@@ -202,6 +219,22 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
       dots.setOpacity(o);
       arcs.setOpacity(o);
     },
+    setLayerOpacity: (o) => {
+      shell.setSurfaceOpacity(o.surface);
+      shell.setAtmosphereOpacity(o.atmosphere);
+      dots.setOpacity(o.dots);
+      arcs.setOpacity(o.arcs);
+      // Fully faded layers stop drawing (and stop writing depth over the tunnel).
+      shell.surface.visible = o.surface > 0;
+      shell.atmosphere.visible = o.atmosphere > 0;
+      dots.mesh.visible = o.dots > 0;
+    },
+    setAperture: (dir, angle) => {
+      aperture.uApertureDir.value.set(...dir).normalize();
+      aperture.uApertureCos.value = angle > 0 ? Math.cos(angle) : 1;
+    },
+    setRotationPaused: (p) => { rotationPaused = p; },
+    setBloomLook: (look) => bloom.setLook(look),
     bloomTier: () => bloom.tier(),
     dispose: () => {
       nodes.dispose();

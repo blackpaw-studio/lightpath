@@ -5,9 +5,18 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { initialBudget, isSoftwareRenderer, sampleFrame, type BloomTier, type FrameBudget } from "./frameBudget";
 
+export interface BloomLook {
+  readonly strength: number;
+  readonly radius: number;
+  readonly threshold: number;
+}
+
+export const GLOBE_BLOOM: BloomLook = { strength: 0.75, radius: 0.45, threshold: 0.62 };
+
 export interface Bloom {
   /** Feed one frame's duration; may degrade the tier (never raises it). */
   sample(dtMs: number): void;
+  setLook(look: BloomLook): void;
   render(): void;
   setSize(width: number, height: number): void;
   tier(): BloomTier;
@@ -31,7 +40,7 @@ export const createBloom = (renderer: WebGLRenderer, scene: Scene, camera: Camer
   const composer = new EffectComposer(renderer);
   composer.renderTarget1.texture.type = HalfFloatType;
   composer.renderTarget2.texture.type = HalfFloatType;
-  const pass = new UnrealBloomPass(size.clone(), 0.75, 0.45, 0.62);
+  const pass = new UnrealBloomPass(size.clone(), GLOBE_BLOOM.strength, GLOBE_BLOOM.radius, GLOBE_BLOOM.threshold);
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(pass);
   composer.addPass(new OutputPass());
@@ -55,6 +64,11 @@ export const createBloom = (renderer: WebGLRenderer, scene: Scene, camera: Camer
     sample: (dtMs) => {
       budget = sampleFrame(budget, dtMs);
       apply();
+    },
+    setLook: (look) => {
+      pass.strength = look.strength;
+      pass.radius = look.radius;
+      pass.threshold = look.threshold;
     },
     render: () => composer.render(),
     setSize: (w, h) => {

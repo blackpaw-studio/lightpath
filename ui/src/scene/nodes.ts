@@ -2,7 +2,7 @@ import {
   AdditiveBlending, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, Quaternion, RingGeometry, Sprite, SpriteMaterial,
   Vector3, type Object3D,
 } from "three";
-import type { PoseMap } from "./globePoses";
+import type { Pose, PoseMap } from "./globePoses";
 import { glowTexture } from "./glow";
 
 export type NodeRole = "origin" | "hop" | "destination";
@@ -63,10 +63,9 @@ export const createNodes = (parent: Object3D): Nodes => {
   const normal = new Vector3();
   const q = new Quaternion();
 
-  const updateEntry = (e: Entry, pose: { pos: readonly number[]; scale: number; opacity: number }, info: NodeInfo,
-    nowMs: number, reducedMotion: boolean): void => {
+  const updateEntry = (e: Entry, pose: Pose, info: NodeInfo, nowMs: number, reducedMotion: boolean): void => {
     const t = nowMs / 1000;
-    const [x, y, z] = pose.pos as [number, number, number];
+    const [x, y, z] = pose.pos;
     e.group.position.set(x, y, z);
     normal.set(x, y, z).normalize();
     q.setFromUnitVectors(Z, normal);
@@ -79,7 +78,9 @@ export const createNodes = (parent: Object3D): Nodes => {
     const alpha = pose.opacity * (info.estimated ? 0.6 + 0.4 * flicker : 1) * (info.timeout ? 0.55 : 1);
     const intensity = info.timeout ? 0.8 : special ? 2.8 : 2.4;
 
-    const size = NODE_SIZE * pose.scale * (special ? 1.35 : 1) * (info.timeout ? 0.7 : 1);
+    // In the tunnel the hop is drawn as its gate ring: the dot shrinks away as it morphs.
+    const dot = 1 - (pose.morph ?? 0);
+    const size = NODE_SIZE * pose.scale * dot * (special ? 1.35 : 1) * (info.timeout ? 0.7 : 1);
     e.glow.scale.setScalar(Math.max(size, 1e-5));
     const gm = e.glow.material as SpriteMaterial;
     gm.color.copy(tmpColor.set(base)).multiplyScalar(intensity);
@@ -104,7 +105,9 @@ export const createNodes = (parent: Object3D): Nodes => {
     } else {
       rm.opacity = 0;
     }
+    rm.opacity *= dot;
     e.ring.visible = rm.opacity > 0.001;
+    e.glow.visible = size > 1e-4;
   };
 
   return {

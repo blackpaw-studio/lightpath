@@ -1,5 +1,6 @@
 import { InstancedBufferAttribute, InstancedBufferGeometry, Float32BufferAttribute, Mesh, ShaderMaterial, Vector3 } from "three";
 import { latLonToVec3 } from "../geo";
+import { apertureGlsl, createApertureUniforms, type ApertureUniforms } from "./atmosphere";
 import { decodeLandDots } from "./landgrid";
 
 /** Radius the land dots sit at (just above the dark sphere, just below hop nodes at 1.0). */
@@ -50,6 +51,7 @@ const vertex = /* glsl */ `
 `;
 
 const fragment = /* glsl */ `
+  ${apertureGlsl}
   uniform vec3 uColor;
   uniform vec3 uHot;
   uniform float uOpacity;
@@ -70,7 +72,9 @@ const fragment = /* glsl */ `
     float twinkle = 0.85 + 0.15 * sin(uTime * (0.6 + vSeed * 1.4) + vSeed * 40.0);
     float limb = smoothstep(0.0, 0.55, vFacing);
     float lit = 0.45 + 0.75 * vLight;
+    if (inAperture(vCenter)) discard;
     vec3 col = mix(uColor, uHot, 0.35 * vLight + 0.6 * scan) * lit * twinkle * (0.25 + 0.75 * limb);
+    col += uApertureGlow * apertureRim(vCenter) * 0.8;
     gl_FragColor = vec4(col * disc, disc * uOpacity);
   }
 `;
@@ -85,7 +89,9 @@ export interface LandDots {
 }
 
 /** One instanced draw: each dot is a small disc lying flat on the sphere. */
-export const createLandDots = (centers: Float32Array, lightDir: Vector3): LandDots => {
+export const createLandDots = (
+  centers: Float32Array, lightDir: Vector3, aperture: ApertureUniforms = createApertureUniforms(),
+): LandDots => {
   const geometry = new InstancedBufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
   geometry.setIndex([0, 1, 2, 0, 2, 3]);
@@ -105,6 +111,7 @@ export const createLandDots = (centers: Float32Array, lightDir: Vector3): LandDo
       uOpacity: { value: 1 },
       uTime: { value: 0 },
       uLightDir: { value: lightDir },
+      ...aperture,
     },
   });
   const mesh = new Mesh(geometry, material);
