@@ -1,5 +1,8 @@
 import type { ErrorCode, Hop, Origin, ServerMsg } from "./protocol";
 
+/** Errors raised by the UI itself rather than sent by the agent. */
+export type ClientErrorCode = "disconnected" | "cancelled";
+
 export interface TraceState {
   readonly status: "idle" | "running" | "done" | "error";
   readonly target: string | null;
@@ -7,7 +10,7 @@ export interface TraceState {
   readonly origin: Origin | null;
   readonly hops: readonly Hop[];
   readonly reached: boolean | null;
-  readonly error: { readonly code: ErrorCode; readonly message: string } | null;
+  readonly error: { readonly code: ErrorCode | ClientErrorCode; readonly message: string } | null;
   /** Bumped by every trace.started, so views can tell a new trace from the old one even for the same target. */
   readonly generation: number;
 }
@@ -45,3 +48,12 @@ export const reduce = (state: TraceState, msg: ServerMsg): TraceState => {
       return { ...state, status: "error", error: { code: msg.code, message: msg.message } };
   }
 };
+
+/**
+ * End a running trace from the client side: the agent connection dropped, or the
+ * user cancelled (the agent sends nothing back for trace.cancel). Either way the
+ * trace can never finish, so it ends as an error instead of leaving the scene
+ * showing an active trace. Other states are returned as-is.
+ */
+export const interrupt = (state: TraceState, code: ClientErrorCode, message: string): TraceState =>
+  state.status === "running" ? { ...state, status: "error", error: { code, message } } : state;

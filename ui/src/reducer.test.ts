@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Hop, Origin, ServerMsg } from "./protocol";
-import { initialState, reduce, type TraceState } from "./reducer";
+import { initialState, interrupt, reduce, type TraceState } from "./reducer";
 
 const origin: Origin = { publicIp: "1.1.1.1", lat: 1, lon: 2, city: "X", asn: null, org: null };
 const hop = (ttl: number, over: Partial<Hop> = {}): Extract<ServerMsg, { type: "hop" }> => ({
@@ -63,5 +63,22 @@ describe("reduce", () => {
     expect(base.hops[0]!.asn).toBeNull();
     const upd = reduce(base, { type: "hop.update", ttl: 1, asn: 5 });
     expect(upd.hops[1]).toBe(base.hops[1]);
+  });
+});
+
+describe("interrupt", () => {
+  it("ends a running trace as interrupted, keeping its hops and generation", () => {
+    const running = deepFreeze(run(started, hop(1), hop(2)));
+    const s = interrupt(running, "disconnected", "Connection to the agent lost: trace interrupted.");
+    expect(s).toMatchObject({ status: "error", hops: running.hops, generation: running.generation, target: "example.com" });
+    expect(s.error).toEqual({ code: "disconnected", message: "Connection to the agent lost: trace interrupted." });
+  });
+  it("records a user cancel with its own code", () => {
+    expect(interrupt(run(started), "cancelled", "Trace cancelled.").error).toEqual({ code: "cancelled", message: "Trace cancelled." });
+  });
+  it("leaves idle, done and error states untouched", () => {
+    const done = run(started, hop(1), { type: "trace.done", reached: true });
+    expect(interrupt(initialState, "cancelled", "x")).toBe(initialState);
+    expect(interrupt(done, "disconnected", "x")).toBe(done);
   });
 });
