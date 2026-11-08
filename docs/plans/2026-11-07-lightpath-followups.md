@@ -31,6 +31,9 @@ Orchestrator's tracking list. Each item says where it gets resolved.
   - The token bucket would allow about 29 requests in the first minute if X-Rl headers were absent.
   - A fully abandoned batch still spends a token.
   - `trace.done` can be sent without `trace.started` when traceroute exits 0 with no output.
+  - **Installer:** checksums share the release's trust boundary.
+  - **Installer:** two separate `latest` downloads can cross releases; this fails safely.
+  - **Installer:** GitHub Action major-version tags are mutable.
   - The runner's output pipe can be held open by descendant processes. This needs atypical traceroute behaviour.
   - Replay fixture size and event count are unbounded. The fixture is CLI-selected, so it is trusted input.
 - **Globe fixes vs tunnel lane** → tunnel merge and review:

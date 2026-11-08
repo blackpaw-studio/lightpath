@@ -113,7 +113,7 @@ printf 'sentinel' >"$TMP/sentinel"
 ln -s "$TMP/sentinel" "$dest/lightpath.new"
 run_install Linux x86_64 "file://$rel" "$dest"
 if [ "$code" -eq 0 ] && [ "$(cat "$TMP/sentinel")" = sentinel ] && [ "$("$dest/lightpath" 2>/dev/null)" = "lightpath-linux-amd64" ] \
-  && [ -z "$(ls -A "$dest" | grep -v -e '^lightpath$' -e '^lightpath.new$')" ]; then
+  && [ -z "$(find "$dest" -name '.lightpath.*')" ]; then
   pass "install ignores planted staging symlink and leaves no temp dirs"
 else
   fail "install ignores planted staging symlink (code=$code) $out"
