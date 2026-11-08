@@ -8,10 +8,12 @@ export interface TraceState {
   readonly hops: readonly Hop[];
   readonly reached: boolean | null;
   readonly error: { readonly code: ErrorCode; readonly message: string } | null;
+  /** Bumped by every trace.started, so views can tell a new trace from the old one even for the same target. */
+  readonly generation: number;
 }
 
 export const initialState: TraceState = {
-  status: "idle", target: null, resolvedIp: null, origin: null, hops: [], reached: null, error: null,
+  status: "idle", target: null, resolvedIp: null, origin: null, hops: [], reached: null, error: null, generation: 0,
 };
 
 const withHop = (hops: readonly Hop[], hop: Hop): readonly Hop[] =>
@@ -24,7 +26,10 @@ const omitType = <T extends { type: string }>(msg: T): Omit<T, "type"> =>
 export const reduce = (state: TraceState, msg: ServerMsg): TraceState => {
   switch (msg.type) {
     case "trace.started":
-      return { ...initialState, status: "running", target: msg.target, resolvedIp: msg.resolvedIp, origin: msg.origin };
+      return {
+        ...initialState, status: "running", target: msg.target, resolvedIp: msg.resolvedIp, origin: msg.origin,
+        generation: state.generation + 1,
+      };
     case "hop": {
       const hop = omitType(msg);
       return { ...state, hops: withHop(state.hops, hop) };

@@ -3,7 +3,8 @@ import { angularDistance, latLonToVec3, type Vec3 } from "../geo";
 import type { GlobeLayout } from "./layout";
 import { appearance, APPEAR_MS, emptyPoseState, ORIGIN_KEY, stepGlobePoses, type PoseInput } from "./globePoses";
 
-const layout = (hops: [number, Vec3][]): GlobeLayout => ({
+const layout = (hops: [number, Vec3][], generation = 1): GlobeLayout => ({
+  generation,
   origin: latLonToVec3(0, 0),
   hops: hops.map(([ttl, pos]) => ({ ttl, pos, estimated: false, timeout: false, rttMs: 5, color: "#22e6ff" })),
 });
@@ -65,8 +66,22 @@ describe("stepGlobePoses", () => {
   });
 
   it("emits no origin pose when the layout has none", () => {
-    const { poses } = stepGlobePoses(emptyPoseState, input({ origin: null, hops: [] }, 0));
+    const { poses } = stepGlobePoses(emptyPoseState, input({ generation: 0, origin: null, hops: [] }, 0));
     expect(poses.size).toBe(0);
+  });
+
+  it("restarts hops on a new trace generation, even in the same frame as hop 1", () => {
+    const a1 = stepGlobePoses(emptyPoseState, input(layout([[1, a]], 1), 0)).state;
+    const settled = stepGlobePoses(a1, input(layout([[1, a]], 1), 5000)).state;
+    const next = stepGlobePoses(settled, input(layout([[1, b]], 2), 5016));
+    expect(next.poses.get(1)).toMatchObject({ pos: b, scale: 0 }); // blooms in at its own spot, no glide
+    expect(next.poses.get(ORIGIN_KEY)!.scale).toBe(1); // the user's origin carries over
+  });
+
+  it("keeps the previous origin when a new trace has none yet", () => {
+    const s = stepGlobePoses(emptyPoseState, input(layout([], 1), 0)).state;
+    const { poses } = stepGlobePoses(s, input({ generation: 2, origin: null, hops: [] }, 5000));
+    expect(poses.get(ORIGIN_KEY)).toMatchObject({ pos: latLonToVec3(0, 0), scale: 1, opacity: 1 });
   });
 
   it("applies the globe rotation to world positions", () => {

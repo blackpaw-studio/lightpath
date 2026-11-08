@@ -1,5 +1,6 @@
 import {
   AdditiveBlending, Color, InstancedInterleavedBuffer, InterleavedBufferAttribute, Sprite, SpriteMaterial, type Object3D,
+  type Texture,
 } from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -20,8 +21,8 @@ export interface ArcInfo {
 }
 
 export interface Arcs {
-  /** Endpoints come only from `poses`; arcs are keyed by `to`. */
-  update(poses: PoseMap, arcs: readonly ArcInfo[], nowMs: number, reducedMotion: boolean): void;
+  /** Endpoints come only from `poses`; arcs are keyed by `to` within a trace `generation`. */
+  update(poses: PoseMap, arcs: readonly ArcInfo[], nowMs: number, reducedMotion: boolean, generation: number): void;
   setResolution(width: number, height: number, pixelRatio: number): void;
   /** Global fade (the tunnel lane fades globe arcs out). */
   setOpacity(o: number): void;
@@ -50,7 +51,7 @@ interface Entry {
   estimated: boolean;
 }
 
-const makeEntry = (to: number, nowMs: number, estimated: boolean): Entry => {
+const makeEntry = (to: number, nowMs: number, estimated: boolean, texture: Texture): Entry => {
   const geometry = new LineSegmentsGeometry();
   const pos = new Float32Array(SEGMENTS * 6);
   const col = new Float32Array(SEGMENTS * 6);
@@ -73,7 +74,7 @@ const makeEntry = (to: number, nowMs: number, estimated: boolean): Entry => {
   line.frustumCulled = false;
   line.renderOrder = 2;
   const head = new Sprite(new SpriteMaterial({
-    map: glowTexture(), blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
+    map: texture, blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
   }));
   head.renderOrder = 4;
   return { line, material, pos, col, dist, posBuf, colBuf, distBuf, head, bornAt: nowMs, seed: (to * 0.381966) % 1, estimated };
@@ -95,8 +96,8 @@ const curve = (a: Vec3, b: Vec3): Vec3[] => {
   });
 };
 
-export const createArcs = (parent: Object3D): Arcs => {
-  const entries = new Map<number, Entry>();
+export const createArcs = (parent: Object3D, texture: () => Texture = glowTexture): Arcs => {
+  const entries = new Map<string, Entry>();
   const cFrom = new Color();
   const cTo = new Color();
   const c = new Color();
@@ -108,7 +109,7 @@ export const createArcs = (parent: Object3D): Arcs => {
     e.material.linewidth = LINE_WIDTH_PX * resolution.dpr;
   };
 
-  const remove = (k: number, e: Entry): void => {
+  const remove = (k: string, e: Entry): void => {
     parent.remove(e.line, e.head);
     e.line.geometry.dispose();
     e.material.dispose();
@@ -156,17 +157,18 @@ export const createArcs = (parent: Object3D): Arcs => {
   };
 
   return {
-    update: (poses, arcs, nowMs, reducedMotion) => {
-      const wanted = new Set(arcs.map((a) => a.to));
+    update: (poses, arcs, nowMs, reducedMotion, generation) => {
+      const keyOf = (to: number): string => `${generation}:${to}`;
+      const wanted = new Set(arcs.map((a) => keyOf(a.to)));
       for (const [k, e] of entries) if (!wanted.has(k)) remove(k, e);
       for (const info of arcs) {
         const a = poses.get(info.from);
         const b = poses.get(info.to);
-        let e = entries.get(info.to);
+        let e = entries.get(keyOf(info.to));
         if (!e) {
-          e = makeEntry(info.to, nowMs, info.estimated);
+          e = makeEntry(info.to, nowMs, info.estimated, texture());
           applyResolution(e);
-          entries.set(info.to, e);
+          entries.set(keyOf(info.to), e);
           parent.add(e.line, e.head);
         }
         if (e.estimated !== info.estimated) {

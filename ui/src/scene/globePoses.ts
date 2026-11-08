@@ -28,12 +28,21 @@ export interface PoseInput {
 }
 
 export interface GlobePoseState {
+  readonly generation: number;
   /** Smoothed globe-local unit positions. */
   readonly local: ReadonlyMap<number, Vec3>;
   readonly bornAt: ReadonlyMap<number, number>;
 }
 
-export const emptyPoseState: GlobePoseState = { local: new Map(), bornAt: new Map() };
+export const emptyPoseState: GlobePoseState = { generation: 0, local: new Map(), bornAt: new Map() };
+
+/** A new trace keeps only the origin (the user's own location) and restarts every hop. */
+const forGeneration = (s: GlobePoseState, generation: number): GlobePoseState => {
+  if (s.generation === generation) return s;
+  const keep = <V>(m: ReadonlyMap<number, V>): Map<number, V> =>
+    new Map([...m].filter(([k]) => k === ORIGIN_KEY));
+  return { generation, local: keep(s.local), bornAt: keep(s.bornAt) };
+};
 
 const BACK_C1 = 1.70158;
 const easeOutBack = (t: number): number => 1 + (BACK_C1 + 1) * (t - 1) ** 3 + BACK_C1 * (t - 1) ** 2;
@@ -56,8 +65,11 @@ const glide = (from: Vec3, to: Vec3, dtMs: number): Vec3 =>
   slerpGreatCircle(from, to, 1 - Math.exp(-Math.max(dtMs, 0) / GLIDE_TAU_MS));
 
 /** Pure: advance smoothed positions one frame and produce this frame's poses. */
-export const stepGlobePoses = (prev: GlobePoseState, input: PoseInput): { state: GlobePoseState; poses: PoseMap } => {
-  const { origin, hops } = input.layout;
+export const stepGlobePoses = (prevState: GlobePoseState, input: PoseInput): { state: GlobePoseState; poses: PoseMap } => {
+  const { hops } = input.layout;
+  const prev = forGeneration(prevState, input.layout.generation);
+  // Until a real anchor exists the origin stays where it was rather than vanishing.
+  const origin = input.layout.origin ?? prev.local.get(ORIGIN_KEY) ?? null;
   const targets: [number, Vec3][] = [
     ...(origin ? [[ORIGIN_KEY, origin] as [number, Vec3]] : []),
     ...hops.map((h): [number, Vec3] => [h.ttl, h.pos]),
@@ -71,7 +83,7 @@ export const stepGlobePoses = (prev: GlobePoseState, input: PoseInput): { state:
     const look = appearance(input.nowMs - bornAt.get(k)!, input.reducedMotion);
     return [k, { pos: rotateY(pos, input.rotationY), ...look }] as const;
   }));
-  return { state: { local, bornAt }, poses };
+  return { state: { generation: prev.generation, local, bornAt }, poses };
 };
 
 /** Per-frame pose producer. The tunnel lane composes over this one. */

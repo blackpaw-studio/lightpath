@@ -108,6 +108,8 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
 
   let size = { w: opts.width, h: opts.height };
   let state: TraceState = initialState;
+  /** Last real origin (globe-local); anchors a new trace whose origin has no geo yet. */
+  let knownOrigin: Vec3 | null = null;
   let layout = globeLayout(state);
   let infos = nodeInfos(state, layout);
   let arcList = arcInfos(layout);
@@ -163,7 +165,8 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     setState: (s) => {
       if (s === state) return;
       state = s;
-      layout = globeLayout(s);
+      layout = globeLayout(s, knownOrigin);
+      knownOrigin = layout.origin ?? knownOrigin;
       infos = nodeInfos(s, layout);
       arcList = arcInfos(layout);
     },
@@ -179,8 +182,8 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
       shell.surface.rotation.y = rotation;
       dots.update(nowMs);
       dots.setPixelWorld(pixelWorld());
-      nodes.update(poses, infos, nowMs, opts.reducedMotion);
-      arcs.update(poses, arcList, nowMs, opts.reducedMotion);
+      nodes.update(poses, infos, nowMs, opts.reducedMotion, layout.generation);
+      arcs.update(poses, arcList, nowMs, opts.reducedMotion, layout.generation);
       bloom.sample(dtMs);
       if (fadeStart !== null) {
         const k = Math.min((nowMs - fadeStart) / REDUCED_FADE_MS, 1);
