@@ -12,7 +12,8 @@ export interface FrameScheduler {
 }
 
 export interface Loop {
-  step(dtMs: number): void;
+  /** Advance dtMs of virtual time; `render: false` skips the draw (test mode records poses without paying for pixels). */
+  step(dtMs: number, render?: boolean): void;
   start(): void;
   stop(): void;
   now(): number;
@@ -27,11 +28,11 @@ export const createLoop = (target: Steppable, scheduler?: FrameScheduler): Loop 
   let handle: unknown = null;
   let lastTs: number | null = null;
 
-  const step = (dtMs: number): void => {
+  const step = (dtMs: number, render = true): void => {
     const dt = Math.min(Math.max(dtMs, 0), MAX_DT_MS);
     now += dt;
     target.update(dt, now);
-    target.render();
+    if (render) target.render();
   };
 
   const frame = (ts: number): void => {

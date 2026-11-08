@@ -13,7 +13,8 @@ export interface TraceFrame extends Frame {
 }
 
 export interface TestHooks {
-  step(dtMs: number): void;
+  /** Advance one frame; `render: false` updates poses and camera without drawing (fast under software GL). */
+  step(dtMs: number, render?: boolean): void;
   /** Per-entity screen position and visibility for this frame (input to invariants.checkTrace). */
   trace(): TraceFrame;
   state(): TraceState;

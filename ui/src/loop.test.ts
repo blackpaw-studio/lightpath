@@ -14,6 +14,15 @@ describe("createLoop", () => {
     expect(t.render).toHaveBeenCalledTimes(2);
   });
 
+  it("step can skip the draw: the simulation still advances (test mode records poses without rendering)", () => {
+    const t = target();
+    const loop = createLoop(t);
+    loop.step(16, false);
+    expect(loop.now()).toBe(16);
+    expect(t.update).toHaveBeenCalledWith(16, 16);
+    expect(t.render).not.toHaveBeenCalled();
+  });
+
   it("clamps dt to [0, MAX_DT_MS]", () => {
     const t = target();
     const loop = createLoop(t);
