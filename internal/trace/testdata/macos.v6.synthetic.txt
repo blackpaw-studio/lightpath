@@ -1,0 +1,5 @@
+# synthetic: macOS traceroute6 header with "from", zone-ID hop address
+traceroute6 to ipv6.example.com (2001:db8::64) from 2001:db8::5, 64 hops max, 12 byte packets
+ 1  fe80::1%en0  1.2 ms  0.9 ms  0.8 ms
+ 2  2001:db8:0:0::1  4.0 ms  4.1 ms  4.2 ms
+ 3  2001:db8::64  9.0 ms  9.1 ms  9.2 ms
