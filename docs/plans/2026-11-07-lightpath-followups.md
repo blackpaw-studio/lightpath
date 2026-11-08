@@ -18,7 +18,16 @@ Orchestrator's tracking list. Each item says where it gets resolved.
 - **M1 security re-review caveat** → S1.15:
   - `cmd/lightpath/main.go:185` skips `srv.Wait` when `http.Server.Shutdown` returns an error.
   - Always cancel the app ctx and Wait, even on Shutdown error.
+- **M1-C review** → fixed in the S1.15 dispatch:
+  - P1: limiter re-check; single sender loop; stop tokens.
+  - P2: per-request timeout; emit-after-cancel.
+  - Also: 256 B string caps; metro codes the spec requires (`nyc`, `lon`, `par`, `ash`, `chi`, …).
 - **Accepted risks (for the PR body):**
+  - Reserved non-private ranges are still sent to ip-api.
+  - Spoofed PTR or TXT data can fake a hop's location or ASN.
+  - The Cymru /24 cache can be coarse.
+  - The cache is wiped whole at 4096 entries.
+  - A restarted agent starts with a full rate bucket.
   - The runner's output pipe can be held open by descendant processes. This needs atypical traceroute behaviour.
   - Replay fixture size and event count are unbounded. The fixture is CLI-selected, so it is trusted input.
 - **M2-H review #1 (scene reset on disconnect)** → M3 wiring:
