@@ -1,0 +1,73 @@
+import { describe, expect, it } from "vitest";
+import { angularDistance, latLonToVec3, type Vec3 } from "../geo";
+import type { GlobeLayout } from "./layout";
+import { appearance, APPEAR_MS, emptyPoseState, ORIGIN_KEY, stepGlobePoses, type PoseInput } from "./globePoses";
+
+const layout = (hops: [number, Vec3][]): GlobeLayout => ({
+  origin: latLonToVec3(0, 0),
+  hops: hops.map(([ttl, pos]) => ({ ttl, pos, estimated: false, timeout: false, rttMs: 5, color: "#22e6ff" })),
+});
+const input = (l: GlobeLayout, nowMs: number, dtMs = 16, extra: Partial<PoseInput> = {}): PoseInput =>
+  ({ layout: l, nowMs, dtMs, reducedMotion: false, rotationY: 0, ...extra });
+
+describe("appearance", () => {
+  it("pops scale from 0 past 1 and settles at 1 (ease-out-back) at full opacity", () => {
+    expect(appearance(0, false).scale).toBe(0);
+    const peak = Math.max(...Array.from({ length: 41 }, (_, i) => appearance((i / 40) * APPEAR_MS, false).scale));
+    expect(peak).toBeGreaterThan(1);
+    expect(appearance(APPEAR_MS, false)).toEqual({ scale: 1, opacity: 1 });
+    expect(appearance(APPEAR_MS * 5, false)).toEqual({ scale: 1, opacity: 1 });
+  });
+
+  it("fades opacity at full scale under reduced motion", () => {
+    expect(appearance(0, true)).toEqual({ scale: 1, opacity: 0 });
+    expect(appearance(APPEAR_MS / 2, true).opacity).toBeCloseTo(0.5, 6);
+    expect(appearance(APPEAR_MS, true)).toEqual({ scale: 1, opacity: 1 });
+  });
+});
+
+describe("stepGlobePoses", () => {
+  const a = latLonToVec3(10, 10);
+  const b = latLonToVec3(10, 60);
+
+  it("emits the origin and each hop, born at their first frame", () => {
+    const { poses } = stepGlobePoses(emptyPoseState, input(layout([[1, a]]), 1000));
+    expect([...poses.keys()]).toEqual([ORIGIN_KEY, 1]);
+    expect(poses.get(1)!.scale).toBe(0);
+    const later = stepGlobePoses(stepGlobePoses(emptyPoseState, input(layout([[1, a]]), 1000)).state,
+      input(layout([[1, a]]), 1000 + APPEAR_MS));
+    expect(later.poses.get(1)!.scale).toBe(1);
+  });
+
+  it("glides a relocated hop instead of teleporting, and converges", () => {
+    let s = stepGlobePoses(emptyPoseState, input(layout([[1, a]]), 0)).state;
+    let prev: Vec3 = a;
+    let maxStep = 0;
+    for (let t = 16; t <= 3000; t += 16) {
+      const r = stepGlobePoses(s, input(layout([[1, b]]), t));
+      const pos = r.poses.get(1)!.pos;
+      maxStep = Math.max(maxStep, angularDistance(prev, pos));
+      prev = pos;
+      s = r.state;
+    }
+    expect(maxStep).toBeLessThan(angularDistance(a, b) * 0.1);
+    expect(angularDistance(prev, b)).toBeLessThan(1e-4);
+  });
+
+  it("does not move anything when dt is 0", () => {
+    const s = stepGlobePoses(emptyPoseState, input(layout([[1, a]]), 0)).state;
+    expect(stepGlobePoses(s, input(layout([[1, b]]), 0, 0)).poses.get(1)!.pos).toEqual(a);
+  });
+
+  it("drops hops no longer in the layout (new trace)", () => {
+    const s = stepGlobePoses(emptyPoseState, input(layout([[1, a]]), 0)).state;
+    expect([...stepGlobePoses(s, input(layout([]), 16)).poses.keys()]).toEqual([ORIGIN_KEY]);
+  });
+
+  it("applies the globe rotation to world positions", () => {
+    const { poses } = stepGlobePoses(emptyPoseState, input(layout([]), 0, 16, { rotationY: Math.PI / 2 }));
+    const p = poses.get(ORIGIN_KEY)!.pos; // (1,0,0) rotated +90° about y → (0,0,-1)
+    expect(p[0]).toBeCloseTo(0, 12);
+    expect(p[2]).toBeCloseTo(-1, 12);
+  });
+});
