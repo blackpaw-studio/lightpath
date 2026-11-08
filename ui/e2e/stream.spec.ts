@@ -4,7 +4,7 @@
 import { expect, test } from "@playwright/test";
 import { FIXTURES } from "./agents";
 import {
-  byGeneration, checkGlides, expectSmooth, openApp, pathExtent, startTrace, state, stepLive, traceOptions,
+  byGeneration, expectSmooth, openApp, pathExtent, startTrace, state, stepLive, STREAM_MAX_JUMP_WORLD, traceOptions,
 } from "./harness";
 
 const TAIL_MS = 1500;
@@ -16,7 +16,7 @@ test("basic: late geo updates and re-estimation glide", async ({ page }) => {
   // Hop 5 arrives estimated, then hop.update places it in Los Angeles; hops 3–4 re-estimate around it.
   expect(pathExtent(frames, "1:5")).toBeGreaterThan(0.05);
   expect(pathExtent(frames, "1:4")).toBeGreaterThan(0.01);
-  expectSmooth(frames, traceOptions(), checkGlides(frames));
+  expectSmooth(frames, traceOptions(STREAM_MAX_JUMP_WORLD));
 });
 
 test("restart: a cross-ocean relocation glides and a new trace replaces the old one cleanly", async ({ page }) => {
@@ -26,7 +26,7 @@ test("restart: a cross-ocean relocation glides and a new trace replaces the old 
 
   // Hop 3 of the first trace was placed by estimate, then the API put it in Frankfurt.
   expect(pathExtent(frames, "1:3")).toBeGreaterThan(0.5);
-  expectSmooth(frames, traceOptions(), checkGlides(frames));
+  expectSmooth(frames, traceOptions(STREAM_MAX_JUMP_WORLD));
 
   // The restart: generation 2 owns the scene; generation 1's hops are gone.
   const s = await state(page);
@@ -42,6 +42,6 @@ test("real macOS recording: hops and enrichment stream in smoothly", async ({ pa
   await openApp(page, FIXTURES.real);
   await startTrace(page);
   const frames = byGeneration(await stepLive(page, TAIL_MS));
-  expectSmooth(frames, traceOptions(), checkGlides(frames));
+  expectSmooth(frames, traceOptions(STREAM_MAX_JUMP_WORLD));
   expect((await state(page)).status).toBe("done");
 });

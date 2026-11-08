@@ -1,9 +1,10 @@
 // Shared E2E helpers: open the agent-served page in test mode, drive frames
 // through window.__lightpath, record per-frame traces and check them.
+import { writeFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { checkTrace, type Frame, type TraceOptions, type Violation } from "../src/invariants";
 import type { TraceState } from "../src/reducer";
-import { GLIDE_TAU_MS, ORIGIN_KEY } from "../src/scene/globePoses";
+import { GLIDE_MAX_RAD_PER_S, ORIGIN_KEY } from "../src/scene/globePoses";
 import { FLICKER_WINDOW_MS, MAX_JUMP_PX } from "../src/scene/motionBudget";
 import type { TestHooks, TraceFrame } from "../src/testhooks";
 import { agentUrl, type Agent } from "./agents";
@@ -69,14 +70,21 @@ export const step = (page: Page, ms: number, record = false): Promise<GenFrame[]
   }, { ms, dt: FRAME_MS, record });
 
 /**
- * Steps one frame per real ~16 ms while the replay streams hops in, recording
- * every frame, until the trace is done and `tailMs` more has passed. Frames
- * are not drawn (see step) so the pacing stays close to real time.
+ * Steps one frame per real 16.7 ms while the replay streams hops in, recording
+ * every frame, until the trace is done and `tailMs` more has passed, so virtual
+ * time tracks the replay's real timing. Frames are not drawn (see step).
+ * Pacing yields through MessageChannel: headless Chromium on macOS stretches
+ * setTimeout(16) to ~110 ms, which would let virtual time fall behind.
  */
 export const stepLive = (page: Page, tailMs: number, maxMs = 30_000): Promise<GenFrame[]> =>
   page.evaluate(async ({ dt, tailMs, maxMs }) => {
     const hooks = (window as unknown as HookWindow).__lightpath;
     const frames: GenFrame[] = [];
+    const channel = new MessageChannel();
+    const yieldTask = (): Promise<unknown> => new Promise((r) => {
+      channel.port1.onmessage = r;
+      channel.port2.postMessage(0);
+    });
     let doneAt: number | null = null;
     const t0 = performance.now();
     while (performance.now() - t0 < maxMs) {
@@ -85,7 +93,8 @@ export const stepLive = (page: Page, tailMs: number, maxMs = 30_000): Promise<Ge
       frames.push({ ...hooks.trace(), gen: s.generation });
       if (s.status === "done" && doneAt === null) doneAt = performance.now();
       if (doneAt !== null && performance.now() - doneAt >= tailMs) break;
-      await new Promise((r) => setTimeout(r, dt));
+      const due = t0 + frames.length * dt;
+      do await yieldTask(); while (performance.now() < due);
     }
     hooks.step(0, true);
     return frames;
@@ -106,29 +115,11 @@ export const byGeneration = (frames: readonly GenFrame[]): Frame[] =>
 const dist = (a: readonly number[], b: readonly number[]): number => Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!);
 
 /**
- * World continuity while hops stream in on the globe. A relocated node glides
- * (exponential approach, time constant GLIDE_TAU_MS), so one frame covers at
- * most 1 − e^(−dt/τ) of its remaining way (less when its speed cap applies);
- * a snap covers all of it. Each entity's per-frame move is bounded by twice that
- * fraction of the extent of its own path, so a short snap cannot hide behind
- * another hop's long glide. The 2× margin covers estimated hops, whose target
- * itself moves while a neighbour glides.
+ * World bound while hops stream in on the globe: every relocation glides at no
+ * more than GLIDE_MAX_RAD_PER_S, so no node moves further than that in one
+ * frame (10 % margin covers idle rotation). A snap of any visible size exceeds it.
  */
-export const checkGlides = (frames: readonly Frame[]): Violation[] => {
-  const paths = new Map<string, { frame: number; w: readonly number[] }[]>();
-  frames.forEach((f, i) => Object.entries(f.entities).forEach(([k, e]) => {
-    if (e.world) paths.set(k, [...(paths.get(k) ?? []), { frame: i, w: e.world }]);
-  }));
-  const fraction = (1 - Math.exp(-FRAME_MS / GLIDE_TAU_MS)) * 2;
-  return [...paths].flatMap(([id, path]) => {
-    const extent = path.reduce((m, a) => path.reduce((mm, b) => Math.max(mm, dist(a.w, b.w)), m), 0);
-    const limit = extent * fraction + 1e-6;
-    return path.slice(1).flatMap((p, j) => {
-      const d = dist(p.w, path[j]!.w);
-      return d > limit ? [{ kind: "worldJump" as const, id, frame: p.frame, detail: `${d.toFixed(4)} > ${limit.toFixed(4)} (path extent ${extent.toFixed(3)})` }] : [];
-    });
-  });
-};
+export const STREAM_MAX_JUMP_WORLD = (GLIDE_MAX_RAD_PER_S * FRAME_MS) / 1000 * 1.1;
 
 /** Largest extent of any one entity's path (proves a recording actually contains a move). */
 export const pathExtent = (frames: readonly Frame[], id: string): number => {
@@ -139,9 +130,13 @@ export const pathExtent = (frames: readonly Frame[], id: string): number => {
 export const traceOptions = (maxJumpWorld?: number): TraceOptions =>
   ({ maxJumpPx: MAX_JUMP_PX, flickerWindowMs: FLICKER_WINDOW_MS, maxJumpWorld });
 
-/** Asserts no violations (checkTrace plus any extra checks), printing the first few. */
-export const expectSmooth = (frames: readonly Frame[], opts: TraceOptions, extra: readonly Violation[] = []): void => {
-  const violations: Violation[] = [...checkTrace(frames, opts), ...extra];
+/** Asserts checkTrace finds no violations, printing the first few and saving the frames on failure. */
+export const expectSmooth = (frames: readonly Frame[], opts: TraceOptions): void => {
+  const violations: Violation[] = checkTrace(frames, opts);
+  if (violations.length > 0) {
+    // Kept beside the failure for offline inspection.
+    writeFileSync(test.info().outputPath("frames.json"), JSON.stringify(frames));
+  }
   const report = violations.slice(0, 12).map((v) => `${v.kind} ${v.id} @${v.frame}: ${v.detail}`).join("\n");
   expect(violations, `${violations.length} motion violations over ${frames.length} frames\n${report}`).toEqual([]);
 };

@@ -2,7 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { expectShot } from "./harness";
+import { expectShot, step } from "./harness";
 
 const HOSTED = "https://lightpath.blackpaw.studio";
 const DIST = join(import.meta.dirname, "..", "dist");
@@ -32,7 +32,8 @@ const hostedWithoutAgent = async (page: Page): Promise<string[]> => {
 
 test("hosted page without an agent shows the install panel", async ({ page }) => {
   const dials = await hostedWithoutAgent(page);
-  await page.goto(`${HOSTED}/`);
+  // Test mode: frames advance only when stepped, so the screenshot is stable.
+  await page.goto(`${HOSTED}/?test=1`);
   const panel = page.locator(".install");
   await expect(panel).toBeVisible();
   await expect(panel).toContainText("curl -fsSL https://lightpath.blackpaw.studio/install.sh | sh");
@@ -42,6 +43,8 @@ test("hosted page without an agent shows the install panel", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Trace" })).toBeDisabled();
   // The hosted page dials the default local agent port.
   expect(dials[0]).toBe("ws://127.0.0.1:47800/ws");
+  await page.waitForFunction(() => "__lightpath" in window, null, { timeout: 30_000 });
+  await step(page, 1000);
   await expectShot(page, "install-panel.png");
 });
 
