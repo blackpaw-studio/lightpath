@@ -13,6 +13,7 @@ import { createCrossfade } from "./crossfade";
 import { createGates } from "./gates";
 import { createGlobeView, type GlobeView, type GlobeViewOptions } from "./globe";
 import { createGlobePoseSource, ORIGIN_KEY, type PoseMap } from "./globePoses";
+import { markEntities } from "./marks";
 import { TUBE_R, createTunnel } from "./tunnel";
 import { createTunnelController } from "./tunnelController";
 import type { CameraPose, ViewMode } from "./transition";
@@ -126,7 +127,8 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
       gates.update({
         poses: ctl.poses(), gates: ctl.gates(), depths: ctl.depths(), frame, cameraPos: pose.pos,
         cameraFwd: normalize(sub(pose.look, pose.pos)), generation,
-        ringFade: f.gates, labelFade: f.labels, nowMs, reducedMotion: opts.reducedMotion, aspect: size.w / size.h,
+        ringFade: f.gates, labelFade: f.labels, nowMs, dtMs, reducedMotion: opts.reducedMotion, aspect: size.w / size.h,
+        project: globe.project,
       });
     },
     render: () => {
@@ -165,10 +167,12 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
     // One cut flag per frame: the tunnel transition's shot change, or the globe
     // rig's reduced-motion cut while the rig is the camera on screen (in the
     // other modes the controller's camera overrides it, so no cut is seen).
+    // Entities: each pose, plus what was drawn for it (g:<ttl> marker, l:<ttl> label).
     trace: () => {
       const t = globe.trace();
       const rigCut = t.cut === true && ctl.mode() === "globe";
-      return rigCut || ctl.cut() ? { ...t, cut: true } : { ...t, cut: false };
+      const entities = { ...t.entities, ...markEntities(globe.nodeMarks(), gates.marks(), globe.project) };
+      return { ...t, entities, cut: rigCut || ctl.cut() };
     },
     dispose: () => {
       gates.dispose();

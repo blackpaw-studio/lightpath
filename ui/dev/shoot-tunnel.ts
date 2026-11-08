@@ -82,6 +82,9 @@ const result = await page.evaluate(async ({ frames, globeAt, tunnelAt }) => {
   return { opts, violations: inv.checkTrace(fs, opts) };
 }, { frames, globeAt, tunnelAt });
 if (traceOut) writeFileSync(traceOut, JSON.stringify(frames));
+const ids = new Set(frames.flatMap((f) => Object.keys((f as { entities: object }).entities)));
+const count = (prefix: string): number => [...ids].filter((id) => id.startsWith(prefix)).length;
+process.stdout.write(`entities: ${ids.size} (${count("g:")} g:, ${count("l:")} l:)\n`);
 process.stdout.write(
   `checkTrace: ${frames.length} frames, maxJumpPx=${result.opts.maxJumpPx}, ` +
   `maxJumpWorld=${result.opts.maxJumpWorld.toFixed(3)}, ${result.violations.length} violations\n`,

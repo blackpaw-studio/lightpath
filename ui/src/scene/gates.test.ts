@@ -20,7 +20,7 @@ const input = (generation: number): GateFrameInput => {
     frame,
     cameraPos: tunnelPoint(frame, 0.1),
     cameraFwd: frame.n as Vec3,
-    ringFade: 1, labelFade: 1, nowMs: 0, reducedMotion: false, aspect: 16 / 9,
+    ringFade: 1, labelFade: 1, nowMs: 0, dtMs: 1000 / 60, reducedMotion: false, aspect: 16 / 9,
   };
 };
 

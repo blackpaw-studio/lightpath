@@ -1,6 +1,7 @@
 // Gate labels: CSS2D overlays reading "hostname · ASN/org · RTT". Hop text comes
 // from reverse DNS and whois of arbitrary routers, so it is only ever set as
 // textContent, never parsed as HTML.
+import type { Object3D } from "three";
 import { CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { TunnelGate } from "./tunnelLayout";
 
@@ -45,7 +46,8 @@ const el = (doc: Document, cls: string): HTMLDivElement => {
 };
 
 export interface GateLabelView {
-  readonly object: CSS2DObject;
+  /** A CSS2DObject in the browser; any Object3D stands in where there is no DOM. */
+  readonly object: Object3D;
   set(gate: TunnelGate, color: string): void;
   setSide(side: "left" | "right"): void;
   setOpacity(opacity: number): void;
