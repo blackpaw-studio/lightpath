@@ -4,13 +4,29 @@ export interface Agent {
   readonly port: number;
 }
 
+const DEFAULT_PORT_BASE = 47811;
+
+/**
+ * First of three consecutive ports for the replay agents. Set
+ * LIGHTPATH_E2E_PORT_BASE to run several worktrees' suites side by side.
+ */
+export const portBase = (env: Readonly<Record<string, string | undefined>> = process.env): number => {
+  const raw = env.LIGHTPATH_E2E_PORT_BASE;
+  if (raw === undefined || raw === "") return DEFAULT_PORT_BASE;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1024 || n > 65533) throw new Error(`LIGHTPATH_E2E_PORT_BASE must be a port in 1024–65533, got "${raw}"`);
+  return n;
+};
+
+const base = portBase();
+
 export const FIXTURES = {
   /** ≤3 s: estimated, timeout-only, multipath and local hops; late hop.update geo. */
-  basic: { file: "basic.json", port: 47811 },
+  basic: { file: "basic.json", port: base },
   /** Recorded on macOS (traceroute to example.com), ~11 s with real enrichment timing. */
-  real: { file: "real-macos.json", port: 47812 },
+  real: { file: "real-macos.json", port: base + 1 },
   /** A late geo update that moves a hop across the Atlantic, then a mid-trace restart (generation bump). */
-  restart: { file: "restart.json", port: 47813 },
+  restart: { file: "restart.json", port: base + 2 },
 } as const satisfies Record<string, Agent>;
 
 export const agentUrl = (a: Agent, query = "test=1"): string => `http://127.0.0.1:${a.port}/?${query}`;

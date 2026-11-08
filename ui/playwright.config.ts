@@ -1,7 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 import { FIXTURES } from "./e2e/agents";
 
-// One replay agent per fixture (the agent replays a single file). Build the
+// One replay agent per fixture (the agent replays a single file), on
+// LIGHTPATH_E2E_PORT_BASE + 0..2 (default 47811). Build the
 // binary first: `make build` (or `make e2e`, which builds and runs this).
 //
 // Browsers: Chromium and WebKit run on the shared Apollo server when
@@ -27,7 +28,9 @@ export default defineConfig({
   webServer: Object.values(FIXTURES).map((f) => ({
     command: `../lightpath --replay e2e/fixtures/${f.file} --no-open --port ${f.port}`,
     url: `http://127.0.0.1:${f.port}/`,
-    reuseExistingServer: !process.env.CI,
+    // Never reuse: a server already on this port may be another worktree's agent
+    // serving a different build. Use LIGHTPATH_E2E_PORT_BASE to run side by side.
+    reuseExistingServer: false,
     stdout: "ignore" as const,
     stderr: "pipe" as const,
     timeout: 15_000,
