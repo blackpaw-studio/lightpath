@@ -81,7 +81,7 @@ func TestParseFlags(t *testing.T) {
 
 func TestStartServesReplayOnLoopbackOnly(t *testing.T) {
 	d, opened := testDeps(io.Discard)
-	a, err := start(options{replay: fixturePath, noOpen: true}, d)
+	a, err := start(context.Background(), options{replay: fixturePath, noOpen: true}, d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestStartServesReplayOnLoopbackOnly(t *testing.T) {
 
 func TestStartOpensBrowserAtLoopbackURL(t *testing.T) {
 	d, opened := testDeps(io.Discard)
-	a, err := start(options{replay: fixturePath}, d)
+	a, err := start(context.Background(), options{replay: fixturePath}, d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestBrowserOpenFailureIsNotFatal(t *testing.T) {
 	var errOut bytes.Buffer
 	d, _ := testDeps(&errOut)
 	d.openBrowser = func(string) error { return errors.New("no display") }
-	a, err := start(options{replay: fixturePath}, d)
+	a, err := start(context.Background(), options{replay: fixturePath}, d)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestBrowserOpenFailureIsNotFatal(t *testing.T) {
 
 func TestLiveModeReportsNotWired(t *testing.T) {
 	d, _ := testDeps(io.Discard)
-	_, err := start(options{noOpen: true}, d)
+	_, err := start(context.Background(), options{noOpen: true}, d)
 	if !errors.Is(err, errLiveNotWired) || !strings.Contains(err.Error(), "not wired yet") {
 		t.Fatalf("got %v", err)
 	}
@@ -161,20 +161,20 @@ func TestLiveModeReportsNotWired(t *testing.T) {
 func TestMissingReplayFileFailsBeforeListening(t *testing.T) {
 	d, _ := testDeps(io.Discard)
 	d.listen = func(string, string) (net.Listener, error) { t.Fatal("must not listen"); return nil, nil }
-	if _, err := start(options{replay: "testdata/nope.json"}, d); err == nil {
+	if _, err := start(context.Background(), options{replay: "testdata/nope.json"}, d); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
 func TestPortInUseGivesClearError(t *testing.T) {
 	d, _ := testDeps(io.Discard)
-	first, err := start(options{replay: fixturePath, noOpen: true}, d)
+	first, err := start(context.Background(), options{replay: fixturePath, noOpen: true}, d)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.ln.Close()
 	port := first.ln.Addr().(*net.TCPAddr).Port
-	_, err = start(options{replay: fixturePath, noOpen: true, port: port}, d)
+	_, err = start(context.Background(), options{replay: fixturePath, noOpen: true, port: port}, d)
 	if err == nil || !strings.Contains(err.Error(), "in use") || !strings.Contains(err.Error(), strconv.Itoa(port)) {
 		t.Fatalf("got %v", err)
 	}
@@ -191,7 +191,7 @@ func TestNonLoopbackListenerIsRejected(t *testing.T) {
 	d.listen = func(string, string) (net.Listener, error) {
 		return stubListener{&net.TCPAddr{IP: net.IPv4zero, Port: 47800}}, nil
 	}
-	if _, err := start(options{replay: fixturePath, noOpen: true}, d); err == nil || !strings.Contains(err.Error(), "loopback") {
+	if _, err := start(context.Background(), options{replay: fixturePath, noOpen: true}, d); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -206,7 +206,7 @@ func TestReplayStreamsOverWebSocketAndRecords(t *testing.T) {
 		saved <- data
 		return nil
 	}
-	a, err := start(options{replay: fixturePath, record: "out.json", noOpen: true}, d)
+	a, err := start(context.Background(), options{replay: fixturePath, record: "out.json", noOpen: true}, d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,4 +269,67 @@ func TestRunHelpIsNotAnError(t *testing.T) {
 	if err := run(context.Background(), []string{"-h"}, d); err != nil {
 		t.Fatalf("got %v", err)
 	}
+}
+
+func TestShutdownCancelsActiveTraceAndWaitsForIt(t *testing.T) {
+	d, _ := testDeps(io.Discard)
+	started := make(chan struct{})
+	sawCancel := make(chan struct{})
+	returned := make(chan struct{})
+	src := traceFunc(func(ctx context.Context, target string, emit func(protocol.ServerMsg)) error {
+		defer close(returned)
+		emit(protocol.TraceStarted{Target: target})
+		close(started)
+		<-ctx.Done()
+		close(sawCancel)
+		return ctx.Err()
+	})
+	d.live = func() (server.TraceSource, server.Validator, error) {
+		return src, func(string) error { return nil }, nil
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.listen = func(string, string) (net.Listener, error) { return ln, nil }
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	appCtx, stop := context.WithCancel(ctx)
+	runDone := make(chan error, 1)
+	go func() { runDone <- run(appCtx, []string{"--no-open"}, d) }()
+
+	hdr := http.Header{}
+	hdr.Set("Origin", "http://127.0.0.1:"+strconv.Itoa(port))
+	c, _, err := websocket.Dial(ctx, "ws://127.0.0.1:"+strconv.Itoa(port)+"/ws", &websocket.DialOptions{HTTPHeader: hdr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"type":"trace.start","target":"example.com"}`)); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+
+	stop()
+	if err := <-runDone; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	select {
+	case <-sawCancel:
+	default:
+		t.Fatal("source never saw ctx.Done")
+	}
+	select {
+	case <-returned:
+	default:
+		t.Fatal("run returned before the trace source returned")
+	}
+}
+
+type traceFunc func(ctx context.Context, target string, emit func(protocol.ServerMsg)) error
+
+func (f traceFunc) Trace(ctx context.Context, target string, emit func(protocol.ServerMsg)) error {
+	return f(ctx, target, emit)
 }

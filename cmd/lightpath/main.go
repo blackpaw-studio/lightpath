@@ -31,6 +31,7 @@ const (
 	loopbackHost      = "127.0.0.1"
 	readHeaderTimeout = 5 * time.Second
 	shutdownTimeout   = 3 * time.Second
+	traceStopTimeout  = 10 * time.Second // cap on waiting for traces to return at shutdown
 )
 
 // errLiveNotWired is returned until the real runner and enricher are wired in.
@@ -61,7 +62,7 @@ func defaultDeps() deps {
 		live: func() (server.TraceSource, server.Validator, error) {
 			return nil, nil, errLiveNotWired
 		},
-		writeFile: func(path string, data []byte) error { return os.WriteFile(path, data, 0o600) },
+		writeFile: func(path string, data []byte) error { return replay.WriteFileAtomic(path, data, 0o600) },
 	}
 }
 
@@ -94,7 +95,7 @@ func parseFlags(args []string, errOut io.Writer) (options, error) {
 
 type app struct {
 	ln      net.Listener
-	handler http.Handler
+	handler *server.Server
 }
 
 // source builds the trace source and target validator for the chosen mode.
@@ -143,7 +144,7 @@ func listenLoopback(d deps, port int) (net.Listener, error) {
 }
 
 // start validates inputs, binds loopback, builds the handler and opens the browser.
-func start(o options, d deps) (*app, error) {
+func start(ctx context.Context, o options, d deps) (*app, error) {
 	src, val, err := source(o, d)
 	if err != nil {
 		return nil, err
@@ -153,7 +154,7 @@ func start(o options, d deps) (*app, error) {
 		return nil, err
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	h, err := server.New(server.Config{Port: port, Static: d.static, Source: src, Validate: val})
+	h, err := server.New(server.Config{Port: port, Static: d.static, Source: src, Validate: val, Context: ctx})
 	if err != nil {
 		ln.Close()
 		return nil, err
@@ -186,6 +187,13 @@ func (a *app) serve(ctx context.Context) error {
 	if err := <-errc; !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// Hijacked WebSockets are invisible to Shutdown; their sessions end with
+	// ctx, and every trace child must be gone before we exit.
+	tctx, tcancel := context.WithTimeout(context.WithoutCancel(ctx), traceStopTimeout)
+	defer tcancel()
+	if err := a.handler.Wait(tctx); err != nil {
+		return fmt.Errorf("waiting for traces to stop: %w", err)
+	}
 	return nil
 }
 
@@ -197,7 +205,7 @@ func run(ctx context.Context, args []string, d deps) error {
 	if err != nil {
 		return err
 	}
-	a, err := start(o, d)
+	a, err := start(ctx, o, d)
 	if err != nil {
 		return err
 	}
