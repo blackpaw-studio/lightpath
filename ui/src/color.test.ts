@@ -43,3 +43,9 @@ describe("oklab round trip", () => {
     expect(oklabToSrgb(srgbToOklab("#12ab9f"))).toBe("#12ab9f");
   });
 });
+
+describe("rttColor non-finite", () => {
+  it("returns NO_RTT_COLOR for NaN/Infinity", () => {
+    for (const v of [NaN, Infinity, -Infinity]) expect(rttColor(v)).toBe(NO_RTT_COLOR);
+  });
+});

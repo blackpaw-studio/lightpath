@@ -13,7 +13,7 @@ export interface TraceOptions {
   readonly flickerWindowMs: number;
 }
 export interface Violation {
-  readonly kind: "jump" | "flicker";
+  readonly kind: "jump" | "flicker" | "invalid";
   readonly id: string;
   /** Index of the frame at which the violation is observed. */
   readonly frame: number;
@@ -32,6 +32,11 @@ const checkEntity = (id: string, frames: readonly Frame[], opts: TraceOptions): 
   frames.forEach((f, i) => {
     const e = f.entities[id];
     if (e?.visible !== true) {
+      prevVisible = false;
+      return;
+    }
+    if (!Number.isFinite(e.x) || !Number.isFinite(e.y)) {
+      out.push({ kind: "invalid", id, frame: i, detail: `non-finite position (${e.x}, ${e.y})` });
       prevVisible = false;
       return;
     }

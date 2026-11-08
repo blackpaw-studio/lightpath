@@ -53,7 +53,7 @@ const mixLab = (a: Lab, b: Lab, t: number): Lab => [
 
 /** Mean RTT (ms) → cyan ≤20 → violet 80 → red ≥200, linear in OKLab; null → dim grey. */
 export const rttColor = (rttMs: number | null): string => {
-  if (rttMs === null) return NO_RTT_COLOR;
+  if (rttMs === null || !Number.isFinite(rttMs)) return NO_RTT_COLOR;
   const first = STOPS[0]!;
   const last = STOPS[STOPS.length - 1]!;
   if (rttMs <= first.ms) return first.hex;

@@ -44,8 +44,9 @@ export const slerpGreatCircle = (a: Vec3, b: Vec3, t: number): Vec3 => {
 /** n+1 points along the great circle a→b, lifted to radius 1 + k·θ·sin(πt). */
 export const arcPoints = (a: Vec3, b: Vec3, n: number, k: number = DEFAULT_ARC_K): Vec3[] => {
   const h = k * angularDistance(a, b);
-  return Array.from({ length: n + 1 }, (_, i) => {
-    const t = i / n;
+  const segments = Math.max(1, Math.floor(n));
+  return Array.from({ length: segments + 1 }, (_, i) => {
+    const t = i / segments;
     return scale(slerpGreatCircle(a, b, t), 1 + h * Math.sin(Math.PI * t));
   });
 };

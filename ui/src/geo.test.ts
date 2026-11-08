@@ -58,3 +58,11 @@ describe("arcPoints", () => {
     expect(new Set(peaks).size).toBe(4);
   });
 });
+
+describe("arcPoints segment clamp", () => {
+  it("yields finite points for n=0", () => {
+    const pts = arcPoints(latLonToVec3(0, 0), latLonToVec3(0, 60), 0);
+    expect(pts.length).toBe(2);
+    expect(pts.every((p) => p.every(Number.isFinite))).toBe(true);
+  });
+});

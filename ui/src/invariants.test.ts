@@ -44,3 +44,15 @@ describe("checkTrace", () => {
     expect(checkTrace(fs, opts)).toEqual([expect.objectContaining({ kind: "jump", id: "b" })]);
   });
 });
+
+describe("invalid coordinates", () => {
+  it("flags a visible entity with non-finite position", () => {
+    const fs: Frame[] = [
+      { tMs: 0, entities: { a: { x: 0, y: 0, visible: true } } },
+      { tMs: 16, entities: { a: { x: NaN, y: 0, visible: true } } },
+      { tMs: 32, entities: { a: { x: 0, y: Infinity, visible: true } } },
+    ];
+    const kinds = checkTrace(fs, opts).map((v) => v.kind);
+    expect(kinds.filter((k) => k === "invalid")).toHaveLength(2);
+  });
+});
