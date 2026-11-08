@@ -450,8 +450,15 @@ func TestShutdownContextClosesSocketsAndWaitsForTraces(t *testing.T) {
 	default:
 		t.Fatal("Wait returned before the trace source returned")
 	}
-	if _, _, err := c.Read(h.ctx); err == nil {
-		t.Fatal("socket was left open")
+	// Events queued before shutdown (trace.started) may still be buffered;
+	// the socket is closed once a read fails before the harness deadline.
+	for {
+		if _, _, err := c.Read(h.ctx); err != nil {
+			if h.ctx.Err() != nil {
+				t.Fatal("socket was left open")
+			}
+			break
+		}
 	}
 }
 
