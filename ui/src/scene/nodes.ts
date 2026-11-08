@@ -1,6 +1,6 @@
 import {
-  AdditiveBlending, BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Group, Line, LineBasicMaterial, Mesh,
-  MeshBasicMaterial, Quaternion, RingGeometry, Sprite, SpriteMaterial, Vector3, type Object3D,
+  AdditiveBlending, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, Quaternion, RingGeometry, Sprite, SpriteMaterial,
+  Vector3, type Object3D,
 } from "three";
 import type { PoseMap } from "./globePoses";
 import { glowTexture } from "./glow";
@@ -22,7 +22,6 @@ export interface Nodes {
 
 const NODE_SIZE = 0.1;
 const RIPPLE_MS = 1500;
-const BEAM_HEIGHT = 0.16;
 const ORIGIN_COLOR = "#e8fbff";
 const Z = new Vector3(0, 0, 1);
 
@@ -30,7 +29,6 @@ interface Entry {
   readonly group: Group;
   readonly glow: Sprite;
   readonly ring: Mesh;
-  readonly beam: Line;
   readonly bornAt: number;
   readonly seed: number;
 }
@@ -40,12 +38,6 @@ const shimmer = (t: number, seed: number): number =>
   0.5 + 0.25 * Math.sin(t * 7.3 + seed * 3.1) + 0.25 * Math.sin(t * 12.9 + seed * 7.7);
 
 const ringGeometry = new RingGeometry(0.88, 1, 64);
-const beamGeometry = (() => {
-  const g = new BufferGeometry();
-  g.setAttribute("position", new Float32BufferAttribute([0, 0, 0, 0, 0, BEAM_HEIGHT], 3));
-  g.setAttribute("color", new Float32BufferAttribute([1, 1, 1, 0, 0, 0], 3));
-  return g;
-})();
 
 const makeEntry = (key: number, nowMs: number): Entry => {
   const glow = new Sprite(new SpriteMaterial({
@@ -54,19 +46,15 @@ const makeEntry = (key: number, nowMs: number): Entry => {
   const ring = new Mesh(ringGeometry, new MeshBasicMaterial({
     blending: AdditiveBlending, depthWrite: false, transparent: true, side: DoubleSide, toneMapped: false,
   }));
-  const beam = new Line(beamGeometry, new LineBasicMaterial({
-    vertexColors: true, blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
-  }));
   const group = new Group();
-  group.add(ring, beam, glow);
+  group.add(ring, glow);
   group.renderOrder = 3;
-  return { group, glow, ring, beam, bornAt: nowMs, seed: (key * 0.618034) % 1 };
+  return { group, glow, ring, bornAt: nowMs, seed: (key * 0.618034) % 1 };
 };
 
 const disposeEntry = (e: Entry): void => {
   (e.glow.material as SpriteMaterial).dispose();
   (e.ring.material as MeshBasicMaterial).dispose();
-  (e.beam.material as LineBasicMaterial).dispose();
 };
 
 export const createNodes = (parent: Object3D): Nodes => {
@@ -83,7 +71,6 @@ export const createNodes = (parent: Object3D): Nodes => {
     normal.set(x, y, z).normalize();
     q.setFromUnitVectors(Z, normal);
     e.ring.quaternion.copy(q);
-    e.beam.quaternion.copy(q);
 
     const special = info.role !== "hop";
     const base = info.role === "origin" ? ORIGIN_COLOR : info.color;
@@ -118,12 +105,6 @@ export const createNodes = (parent: Object3D): Nodes => {
       rm.opacity = 0;
     }
     e.ring.visible = rm.opacity > 0.001;
-
-    const bm = e.beam.material as LineBasicMaterial;
-    bm.color.copy(tmpColor.set(base)).multiplyScalar(1.6);
-    bm.opacity = special ? pose.opacity * 0.9 : 0;
-    e.beam.visible = special;
-    e.beam.scale.setScalar(pose.scale);
   };
 
   return {
