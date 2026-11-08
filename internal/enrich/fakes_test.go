@@ -92,6 +92,40 @@ func (c *fakeClock) Await(t *testing.T, d time.Duration) {
 	}
 }
 
+// AwaitOther blocks until a pending timer whose duration is not in ignore
+// exists, and returns that duration.
+func (c *fakeClock) AwaitOther(t *testing.T, ignore ...time.Duration) time.Duration {
+	t.Helper()
+	found := make(chan time.Duration, 1)
+	go func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		for {
+			for _, w := range c.waiters {
+				if w.fired {
+					continue
+				}
+				skip := false
+				for _, d := range ignore {
+					skip = skip || w.dur == d
+				}
+				if !skip {
+					found <- w.dur
+					return
+				}
+			}
+			c.cond.Wait()
+		}
+	}()
+	select {
+	case d := <-found:
+		return d
+	case <-time.After(5 * time.Second):
+		t.Fatal("no unexpected timer was ever registered")
+		return 0
+	}
+}
+
 // fakeTXT resolves TXT names from a map; names in block hang until ctx ends.
 type fakeTXT struct {
 	mu      sync.Mutex
