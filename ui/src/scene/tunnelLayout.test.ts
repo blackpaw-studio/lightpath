@@ -3,7 +3,7 @@ import { latLonToVec3, type Vec3 } from "../geo";
 import type { Hop } from "../protocol";
 import { initialState, type TraceState } from "../reducer";
 import {
-  gateLabel, gateSpacing, helixLocal, isTimeoutHop, MIN_GAP, RTT_GAP_K, tunnelFrame, tunnelGates, tunnelPoint,
+  gateLabel, gateSpacing, helixLocal, isTimeoutHop, MAX_RTT_DEPTH, MIN_GAP, RTT_GAP_K, tunnelFrame, tunnelGates, tunnelPoint,
 } from "./tunnelLayout";
 
 const hop = (ttl: number, rtts: (number | null)[], extra: Partial<Hop> = {}): Hop => ({
@@ -16,29 +16,42 @@ const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2
 const len = (a: Vec3): number => Math.hypot(...a);
 
 describe("gateSpacing", () => {
-  it("spaces small RTT increases at the minimum gap", () => {
-    gateSpacing([1, 2, 3]).forEach((s, i) => expect(s).toBeCloseTo((i + 1) * MIN_GAP, 12));
+  const gaps = (s: number[]): number[] => s.map((x, i) => x - (s[i - 1] ?? 0));
+
+  it("adds every RTT increase on top of the minimum gap, however small", () => {
+    const g = gaps(gateSpacing([10, 12]));
+    expect(g[0]).toBeCloseTo(MIN_GAP + RTT_GAP_K * 10, 12);
+    expect(g[1]).toBeCloseTo(MIN_GAP + RTT_GAP_K * 2, 12);
   });
-  it("spaces large increases in proportion to the RTT delta", () => {
-    const [a, b] = gateSpacing([10, 110]);
-    expect(b! - a!).toBeCloseTo(RTT_GAP_K * 100, 12);
+  it("spaces in proportion to the RTT delta", () => {
+    const g = gaps(gateSpacing([10, 110, 160]));
+    expect(g[1]! - MIN_GAP).toBeCloseTo(2 * (g[2]! - MIN_GAP), 12);
   });
-  it("clamps negative deltas to the minimum gap", () => {
-    const s = gateSpacing([200, 20, 25]);
-    expect(s[1]! - s[0]!).toBeCloseTo(MIN_GAP, 12);
-    expect(s[2]! - s[1]!).toBeCloseTo(MIN_GAP, 12);
-  });
-  it("measures the first gate from the origin (RTT 0)", () => {
-    expect(gateSpacing([100])[0]).toBeCloseTo(RTT_GAP_K * 100, 12);
+  it("clamps negative deltas to the minimum gap and measures from the new value", () => {
+    const g = gaps(gateSpacing([200, 20, 25]));
+    expect(g[1]).toBeCloseTo(MIN_GAP, 12);
+    expect(g[2]).toBeCloseTo(MIN_GAP + RTT_GAP_K * 5, 12);
   });
   it("timeouts get the minimum gap and do not reset the RTT baseline", () => {
-    const s = gateSpacing([50, null, 150]);
-    expect(s[1]! - s[0]!).toBeCloseTo(MIN_GAP, 12);
-    expect(s[2]! - s[1]!).toBeCloseTo(RTT_GAP_K * 100, 12);
+    const g = gaps(gateSpacing([50, null, 150]));
+    expect(g[1]).toBeCloseTo(MIN_GAP, 12);
+    expect(g[2]).toBeCloseTo(MIN_GAP + RTT_GAP_K * 100, 12);
   });
   it("is strictly increasing", () => {
     const s = gateSpacing([5, null, 3, 300, 1, null, null, 2]);
     s.slice(1).forEach((x, i) => expect(x).toBeGreaterThan(s[i]!));
+  });
+  it("caps the depth RTT adds, keeping the proportions (a satellite hop never makes the tube absurd)", () => {
+    const rtts = Array.from({ length: 20 }, (_, i) => 40 * (i + 1));
+    const s = gateSpacing(rtts);
+    expect(s[s.length - 1]).toBeCloseTo(20 * MIN_GAP + MAX_RTT_DEPTH, 9);
+    const g = gaps(s);
+    g.forEach((x) => expect(x).toBeCloseTo(g[0]!, 9));
+  });
+  it("keeps a typical 10–150 ms route between 1x and 2x the minimum-gap length", () => {
+    const s = gateSpacing([1, 8, 11, 14, null, 78, 84, 91, 129, 140, 146, 150]);
+    expect(s[s.length - 1]! / (12 * MIN_GAP)).toBeGreaterThan(1.3);
+    expect(s[s.length - 1]! / (12 * MIN_GAP)).toBeLessThan(2);
   });
 });
 

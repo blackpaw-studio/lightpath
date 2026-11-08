@@ -9,13 +9,14 @@ import type { Steppable } from "../loop";
 import type { TraceState } from "../reducer";
 import type { TraceFrame } from "../testhooks";
 import { GLOBE_BLOOM, type BloomLook } from "./bloom";
-import { createCrossfade } from "./crossfade";
+import { createCrossfade, crossfadeOpacity, crossfadeTrace } from "./crossfade";
 import { createGates } from "./gates";
 import { createGlobeView, type GlobeView, type GlobeViewOptions } from "./globe";
 import { createGlobePoseSource, ORIGIN_KEY, type PoseMap } from "./globePoses";
+import { markEntities } from "./marks";
 import { TUBE_R, createTunnel } from "./tunnel";
 import { createTunnelController } from "./tunnelController";
-import type { CameraPose, ViewMode } from "./transition";
+import { REDUCED_MS, type CameraPose, type ViewMode } from "./transition";
 
 /** Portal radius in the globe as a multiple of the tube's angular radius at the surface. */
 /** Inside the tube the neon fills the frame: a tighter, higher-threshold bloom keeps it from washing out. */
@@ -76,6 +77,9 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
   let anchored: unknown = null;
   let now = 0;
   let generation = 0;
+  /** The outgoing shot's trace at the last cut, and when that cut's crossfade started. */
+  let snapshot: TraceFrame | null = null;
+  let cutAt: number | null = null;
 
   const place = (c: CameraPose): void => {
     camera.position.set(...c.pos);
@@ -95,6 +99,17 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
     globe.setBloomLook(mixLook(GLOBE_BLOOM, TUNNEL_BLOOM, f.tunnel));
   };
 
+  // Entities: each pose, plus what was drawn for it (g:<ttl> marker, l:<ttl> label).
+  // One cut flag per frame: the tunnel transition's shot change, or the globe
+  // rig's reduced-motion cut while the rig is the camera on screen (in the
+  // other modes the controller's camera overrides it, so no cut is seen).
+  const liveTrace = (): TraceFrame => {
+    const t = globe.trace();
+    const rigCut = t.cut === true && ctl.mode() === "globe";
+    const entities = { ...t.entities, ...markEntities(globe.nodeMarks(), gates.marks(), globe.project) };
+    return { ...t, entities, cut: rigCut || ctl.cut() };
+  };
+
   return {
     globe,
     setState: (s) => {
@@ -106,6 +121,8 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
     update: (dtMs, nowMs) => {
       now = nowMs;
       ctl.advance(dtMs);
+      // Camera, poses and drawn marks still hold the outgoing shot: that is what the crossfade snapshot shows.
+      if (ctl.cut()) [snapshot, cutAt] = [liveTrace(), nowMs];
       const mode = ctl.mode();
       globe.setRotationPaused(mode !== "globe");
       applyFades();
@@ -126,7 +143,8 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
       gates.update({
         poses: ctl.poses(), gates: ctl.gates(), depths: ctl.depths(), frame, cameraPos: pose.pos,
         cameraFwd: normalize(sub(pose.look, pose.pos)), generation,
-        ringFade: f.gates, labelFade: f.labels, nowMs, reducedMotion: opts.reducedMotion, aspect: size.w / size.h,
+        ringFade: f.gates, labelFade: f.labels, nowMs, dtMs, reducedMotion: opts.reducedMotion, aspect: size.w / size.h,
+        project: globe.project,
       });
     },
     render: () => {
@@ -162,14 +180,8 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
     mode: () => ctl.mode(),
     viewT: () => ctl.viewT(),
     poses: () => ctl.poses(),
-    // One cut flag per frame: the tunnel transition's shot change, or the globe
-    // rig's reduced-motion cut while the rig is the camera on screen (in the
-    // other modes the controller's camera overrides it, so no cut is seen).
-    trace: () => {
-      const t = globe.trace();
-      const rigCut = t.cut === true && ctl.mode() === "globe";
-      return rigCut || ctl.cut() ? { ...t, cut: true } : { ...t, cut: false };
-    },
+    // While a cut is crossfading, the trace is what the screen shows: snapshot over live.
+    trace: () => crossfadeTrace(liveTrace(), snapshot, crossfadeOpacity(cutAt, now, REDUCED_MS)),
     dispose: () => {
       gates.dispose();
       tunnel.dispose();

@@ -5,7 +5,7 @@ import type { Vec3 } from "../geo";
 import type { TraceState } from "../reducer";
 import { initialState } from "../reducer";
 import type { Steppable } from "../loop";
-import { projectFrame, type TraceFrame } from "../testhooks";
+import { projectFrame, type Projection, type TraceFrame } from "../testhooks";
 import { createApertureUniforms, createGlobeShell } from "./atmosphere";
 import { createBackdrop } from "./backdrop";
 import { createBloom, type Bloom, type BloomLook } from "./bloom";
@@ -14,6 +14,7 @@ import type { BloomTier } from "./frameBudget";
 import { createGlobePoseSource, ORIGIN_KEY, rotateY, type PoseMap, type PoseSource } from "./globePoses";
 import { createArcs, type ArcInfo } from "./arcs";
 import { createLandDots } from "./landdots";
+import type { DrawnMark } from "./marks";
 import { globeLayout, type GlobeLayout } from "./layout";
 import { createNodes, type NodeInfo } from "./nodes";
 import { createStars } from "./stars";
@@ -42,6 +43,10 @@ export interface GlobeView extends Steppable {
   /** Poses produced this frame (one source per frame). */
   poses(): PoseMap;
   trace(): TraceFrame;
+  /** Each node's dot as drawn this frame (tracing). */
+  nodeMarks(): ReadonlyMap<number, DrawnMark>;
+  /** World point → CSS-pixel screen position through the current camera. */
+  project(p: Vec3): Projection;
   /** Replace the per-frame pose source (tunnel lane: wraps createGlobePoseSource). */
   setPoseSource(source: PoseSource): void;
   /** Fade globe body, atmosphere, land dots and arcs (tunnel transition). Nodes follow their poses. */
@@ -166,7 +171,7 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     }
   };
 
-  const project = (p: Vec3): { x: number; y: number; inFrustum: boolean } => {
+  const project = (p: Vec3): Projection => {
     const v = new Vector3(...p).project(rig.camera);
     return {
       x: ((v.x + 1) / 2) * size.w,
@@ -221,6 +226,8 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     },
     poses: () => poses,
     trace: () => ({ ...projectFrame(now, poses, project), ...(cutThisFrame ? { cut: true } : {}) }),
+    nodeMarks: () => nodes.marks(),
+    project,
     setPoseSource: (s) => { poseSource = s; },
     setGlobeOpacity: (o) => {
       shell.setOpacity(o);

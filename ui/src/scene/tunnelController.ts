@@ -7,7 +7,7 @@ import { fitDistance, FOV_DEG, springStep, type SpringState } from "./camera";
 import { ORIGIN_KEY, type PoseMap, type PoseSource } from "./globePoses";
 import { createTunnelPoseSource } from "./poses";
 import {
-  cameraAt, focusDepth, globeTransition, layerFades, modeOf, northUpSafe, reducedCameraAt, reducedShot, rigUp, rotateBetween, S_HOME,
+  cameraAt, DIVE_MS, focusDepth, globeTransition, layerFades, modeOf, northUpSafe, reducedCameraAt, REDUCED_MS, reducedShot, rigUp, rotateBetween, S_HOME, T_SURFACE,
   startTransition, stepTransition, viewTOf, type CameraPose, type LayerFades, type Transition, type ViewMode,
 } from "./transition";
 import { tunnelFrame, tunnelGates, type TunnelFrame, type TunnelGate } from "./tunnelLayout";
@@ -85,6 +85,13 @@ export const createTunnelController = (deps: TunnelControllerDeps): TunnelContro
   let lastShot = shotKey();
 
   const advanceCamera = (dtMs: number): void => {
+    // Until the camera crosses the surface it is not on the spline yet: hold it
+    // at home and keep any focus goal for when it is (a focus during an early
+    // dive would otherwise be crammed into the last tenth of the flight).
+    if (viewTOf(transition) < T_SURFACE) {
+      cam = { x: S_HOME, v: 0 };
+      return;
+    }
     // Surfacing pulls the camera home along the spline while the flight plays.
     const goal = mode() === "surfacing" ? S_HOME : camGoal;
     cam = deps.reducedMotion ? { x: goal, v: 0 } : springStep(cam, goal, dtMs, FOCUS_OMEGA);
@@ -98,11 +105,14 @@ export const createTunnelController = (deps: TunnelControllerDeps): TunnelContro
     poseSource: (input) => (poses = tunnel.source(input)),
     setState: (s) => {
       if (s === state) return;
+      // A new trace restarts the gates near the mouth; glide the camera back there
+      // along the spline rather than leaving it deep in an empty tube.
+      if (state && s.generation !== state.generation) camGoal = S_HOME;
       state = s;
       gates = tunnelGates(s);
     },
     advance: (dtMs) => {
-      if (!holdingForReturn()) transition = stepTransition(transition, dtMs);
+      if (!holdingForReturn()) transition = stepTransition(transition, dtMs, deps.reducedMotion ? REDUCED_MS : DIVE_MS);
       advanceCamera(dtMs);
       const key = shotKey();
       cut = key !== lastShot;

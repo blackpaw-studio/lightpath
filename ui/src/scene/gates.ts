@@ -11,6 +11,7 @@ import { ORIGIN_KEY, type Pose, type PoseMap } from "./globePoses";
 import { tunnelTangent, type TunnelFrame, type TunnelGate } from "./tunnelLayout";
 import { TUBE_R } from "./tunnel";
 import { createGateLabel, type GateLabelView } from "./labels";
+import type { DrawnMark, GateMark } from "./marks";
 import { labelVisibility } from "./labelRank";
 
 export const GATE_R = 0.2;
@@ -77,12 +78,18 @@ export interface GateFrameInput {
   readonly reducedMotion: boolean;
   /** Viewport width / height: portrait screens are narrower than a near ring, so labels go above it. */
   readonly aspect: number;
+  /** Frame time, to measure each label's on-screen speed per 1/60 s. */
+  readonly dtMs: number;
+  /** World → screen px for this frame's camera. Without it labels skip the speed fade. */
+  readonly project?: (p: Vec3Like) => { readonly x: number; readonly y: number; readonly inFrustum: boolean };
 }
 
 type Vec3Like = readonly [number, number, number];
 
 export interface Gates {
   update(input: GateFrameInput): void;
+  /** Each gate's ring and label as drawn by the last update, for tracing. */
+  marks(): ReadonlyMap<number, GateMark>;
   dispose(): void;
 }
 
@@ -108,7 +115,9 @@ const arcRing = (geometry: TorusGeometry, material: MeshBasicMaterial, count: nu
     return m;
   });
 
-const makeEntry = (key: number, broken: boolean, generation: number, parent: Object3D): Entry => {
+const makeEntry = (
+  key: number, broken: boolean, generation: number, parent: Object3D, makeLabel: () => GateLabelView,
+): Entry => {
   const material = additive();
   const reticleMaterial = additive();
   const rings = broken ? arcRing(brokenGeometry, material, BROKEN_ARCS, key * 0.37) : [new Mesh(ringGeometry, material)];
@@ -119,7 +128,7 @@ const makeEntry = (key: number, broken: boolean, generation: number, parent: Obj
   group.add(...rings, reticle, ...(halo ? [new Mesh(haloGeometry, halo)] : []));
   group.renderOrder = 3;
   parent.add(group);
-  const label = key === ORIGIN_KEY ? null : createGateLabel();
+  const label = key === ORIGIN_KEY ? null : makeLabel();
   if (label) parent.add(label.object);
   return { group, rings, reticle, material, reticleMaterial, halo, label, broken, generation };
 };
@@ -137,6 +146,17 @@ const disposeEntry = (e: Entry, parent: Object3D): void => {
 
 /** Distance fog for rings (the tube shader fogs the same way). */
 const fog = (d: number): number => Math.exp(-d * 0.2) * smoothstep(0.02, 0.18, d);
+/**
+ * A label moving faster than this on screen (px per 1/60 s) hides at once:
+ * text racing past the camera is unreadable, and it must never move more than
+ * the motion budget (48 px/frame) while visible.
+ */
+const LABEL_MAX_SPEED = 30;
+/** A label that had to hide stays hidden this long, then fades back in, so it never blinks. */
+const LABEL_REST_MS = 1200;
+const LABEL_RETURN_MS = 300;
+const FRAME_MS = 1000 / 60;
+
 /** Far labels fade even when few gates are ahead (labelVisibility handles the crowding). */
 const labelFar = (ahead: number): number => smoothstep(4.5, 3, ahead);
 
@@ -153,8 +173,27 @@ const labelOpacities = (input: GateFrameInput, labelled: ReadonlySet<number>): M
   return new Map(keys.map((k, i) => [k, vis[i]! * labelFar(ahead[i]!)]));
 };
 
-export const createGates = (parent: Object3D): Gates => {
+export const createGates = (parent: Object3D, makeLabel: () => GateLabelView = createGateLabel): Gates => {
   const entries = new Map<number, Entry>();
+  const drawn = new Map<number, GateMark>();
+  /** Each label's screen position last frame, for its on-screen speed. */
+  const lastScreen = new Map<number, { readonly x: number; readonly y: number; readonly inFrustum: boolean }>();
+  /** When each label that had to hide for speed may start fading back in. */
+  const restUntil = new Map<number, number>();
+
+  /** 1 for a label moving slowly on screen; 0 from the frame it moves too fast until it has rested. */
+  const speedFade = (key: number, pos: Vec3Like, input: GateFrameInput): number => {
+    if (!input.project) return 1;
+    const s = input.project(pos);
+    const prev = lastScreen.get(key);
+    lastScreen.set(key, s);
+    const speed = prev && prev.inFrustum && s.inFrustum
+      ? Math.hypot(s.x - prev.x, s.y - prev.y) * (FRAME_MS / Math.max(input.dtMs, 1))
+      : 0;
+    if (speed > LABEL_MAX_SPEED) restUntil.set(key, input.nowMs + LABEL_REST_MS);
+    const until = restUntil.get(key);
+    return until === undefined ? 1 : smoothstep(until, until + LABEL_RETURN_MS, input.nowMs);
+  };
   const color = new Color();
   const q = new Quaternion();
   const m = new Matrix4();
@@ -183,7 +222,7 @@ export const createGates = (parent: Object3D): Gates => {
 
   const updateEntry = (
     key: number, e: Entry, pose: Pose, gate: TunnelGate | undefined, input: GateFrameInput, labelVis: number,
-  ): void => {
+  ): GateMark => {
     const s = input.depths.get(key) ?? 0;
     const isMouth = key === ORIGIN_KEY;
     const morph = pose.morph ?? 0;
@@ -209,12 +248,15 @@ export const createGates = (parent: Object3D): Gates => {
     e.reticle.scale.setScalar(0.84);
     e.reticle.rotation.z = input.reducedMotion ? 0 : (input.nowMs / 1000) * 0.35 * (key % 2 === 0 ? 1 : -1);
 
-    if (e.label && gate) {
-      const side = key % 2 === 0 ? 1 : -1;
-      placeLabel(e, pose, input.frame, input.aspect, side);
-      e.label.set(gate, hex);
-      e.label.setOpacity(pose.opacity * input.labelFade * labelVis);
-    }
+    const ring: DrawnMark = { pos: pose.pos, alpha: e.group.visible ? alpha : 0 };
+    if (!e.label || !gate) return { ring, label: null };
+    const side = key % 2 === 0 ? 1 : -1;
+    placeLabel(e, pose, input.frame, input.aspect, side);
+    e.label.set(gate, hex);
+    const p = e.label.object.position;
+    const opacity = pose.opacity * input.labelFade * labelVis * speedFade(key, [p.x, p.y, p.z], input);
+    e.label.setOpacity(opacity);
+    return { ring, label: input.frame ? { pos: [p.x, p.y, p.z], alpha: opacity } : null };
   };
 
   return {
@@ -227,23 +269,30 @@ export const createGates = (parent: Object3D): Gates => {
         if (gone || stale || (gate && gate.broken !== e.broken)) {
           disposeEntry(e, parent);
           entries.delete(k);
+          lastScreen.delete(k);
+          restUntil.delete(k);
         }
       }
       const labels = labelOpacities(input, new Set(byTtl.keys()));
+      drawn.clear();
       for (const [k, pose] of input.poses) {
         const gate = byTtl.get(k);
         if (k !== ORIGIN_KEY && !gate) continue;
         let e = entries.get(k);
         if (!e) {
-          e = makeEntry(k, gate?.broken ?? false, input.generation, parent);
+          e = makeEntry(k, gate?.broken ?? false, input.generation, parent, makeLabel);
           entries.set(k, e);
         }
-        updateEntry(k, e, pose, gate, input, labels.get(k) ?? 0);
+        drawn.set(k, updateEntry(k, e, pose, gate, input, labels.get(k) ?? 0));
       }
     },
+    marks: () => drawn,
     dispose: () => {
       entries.forEach((e) => disposeEntry(e, parent));
       entries.clear();
+      drawn.clear();
+      lastScreen.clear();
+      restUntil.clear();
     },
   };
 };

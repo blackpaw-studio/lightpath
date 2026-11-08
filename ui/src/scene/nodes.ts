@@ -3,6 +3,7 @@ import {
   Vector3, type Object3D, type Texture,
 } from "three";
 import type { Pose, PoseMap } from "./globePoses";
+import type { DrawnMark } from "./marks";
 import { glowTexture } from "./glow";
 
 export type NodeRole = "origin" | "hop" | "destination";
@@ -20,6 +21,8 @@ export interface Nodes {
    * trace `generation` recreates hop entries (the origin persists).
    */
   update(poses: PoseMap, info: ReadonlyMap<number, NodeInfo>, nowMs: number, reducedMotion: boolean, generation: number): void;
+  /** Each node's dot as drawn by the last update (alpha 0 once it has shrunk away), for tracing. */
+  marks(): ReadonlyMap<number, DrawnMark>;
   dispose(): void;
 }
 
@@ -65,11 +68,12 @@ const entryKey = (ttl: number, generation: number): string => (ttl === 0 ? "orig
 
 export const createNodes = (parent: Object3D, texture: () => Texture = glowTexture): Nodes => {
   const entries = new Map<string, Entry>();
+  const drawn = new Map<number, DrawnMark>();
   const tmpColor = new Color();
   const normal = new Vector3();
   const q = new Quaternion();
 
-  const updateEntry = (e: Entry, pose: Pose, info: NodeInfo, nowMs: number, reducedMotion: boolean): void => {
+  const updateEntry = (e: Entry, pose: Pose, info: NodeInfo, nowMs: number, reducedMotion: boolean): DrawnMark => {
     const t = nowMs / 1000;
     const [x, y, z] = pose.pos;
     e.group.position.set(x, y, z);
@@ -114,10 +118,12 @@ export const createNodes = (parent: Object3D, texture: () => Texture = glowTextu
     rm.opacity *= dot;
     e.ring.visible = rm.opacity > 0.001;
     e.glow.visible = size > 1e-4;
+    return { pos: pose.pos, alpha: e.glow.visible ? Math.max(gm.opacity, rm.opacity) : rm.opacity };
   };
 
   return {
     update: (poses, info, nowMs, reducedMotion, generation) => {
+      drawn.clear();
       const wanted = new Set([...poses.keys()].map((k) => entryKey(k, generation)));
       for (const [k, e] of entries) {
         if (!wanted.has(k)) {
@@ -136,9 +142,10 @@ export const createNodes = (parent: Object3D, texture: () => Texture = glowTextu
           entries.set(key, e);
           parent.add(e.group);
         }
-        updateEntry(e, pose, look, nowMs, reducedMotion);
+        drawn.set(ttl, updateEntry(e, pose, look, nowMs, reducedMotion));
       }
     },
+    marks: () => drawn,
     dispose: () => {
       entries.forEach((e) => { parent.remove(e.group); disposeEntry(e); });
       entries.clear();

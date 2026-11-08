@@ -13,12 +13,13 @@ const dist = (a: readonly number[], b: readonly number[]): number => Math.hypot(
 /**
  * Peak legitimate per-frame world move for a route: its longest hop flight
  * (globe frame → tunnel frame) at the steepest point of the eased flight —
- * smoothstep slope 1.5/window × sine-ease slope π/2 × one frame of DIVE_MS — plus 10 %.
+ * smoothstep slope 1.5/window × sine-ease slope π/2 × one frame of the run — plus 10 %.
+ * The run is DIVE_MS, or REDUCED_MS under reduced motion.
  */
-export const worldJumpBound = (globe: Frame, tunnel: Frame, frameMs = 1000 / 60): number => {
+export const worldJumpBound = (globe: Frame, tunnel: Frame, frameMs = 1000 / 60, durationMs = DIVE_MS): number => {
   const spans = Object.entries(globe.entities).flatMap(([k, e]) => {
     const t = tunnel.entities[k];
     return e.world && t?.world ? [dist(e.world, t.world)] : [];
   });
-  return Math.max(0, ...spans) * (1.5 / (FLIGHT[1] - FLIGHT[0])) * (Math.PI / 2) * (frameMs / DIVE_MS) * 1.1;
+  return Math.max(0, ...spans) * (1.5 / (FLIGHT[1] - FLIGHT[0])) * (Math.PI / 2) * (frameMs / durationMs) * 1.1;
 };

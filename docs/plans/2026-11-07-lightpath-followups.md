@@ -34,6 +34,11 @@ Orchestrator's tracking list. Each item says where it gets resolved.
   - **Installer:** checksums share the release's trust boundary.
   - **Installer:** two separate `latest` downloads can cross releases; this fails safely.
   - **Installer:** GitHub Action major-version tags are mutable.
+  - **Tunnel:** labels moving faster than 30 px/frame hide and rest for 1.2 s, so a label teleport bug would be masked. The `g:` gate entities still catch it, since labels anchor to gates.
+  - **Tunnel:** a focus within the first 360 ms of a reduced-motion dive causes a second crossfade.
+  - **Tunnel:** `l:` alpha ignores the layer's crossfade dim.
+  - **Tunnel:** `lerpLatLon` can flip ±180° mid-dive while the rig is still reframing.
+  - **Tunnel:** small per-frame allocations in poses, labels and camera.
   - The runner's output pipe can be held open by descendant processes. This needs atypical traceroute behaviour.
   - Replay fixture size and event count are unbounded. The fixture is CLI-selected, so it is trusted input.
 - **Globe fixes vs tunnel lane** → tunnel merge and review:

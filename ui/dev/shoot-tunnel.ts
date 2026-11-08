@@ -72,16 +72,22 @@ await shot("surface-mid");
 await rec(3500);
 await shot("surfaced");
 
-const result = await page.evaluate(async ({ frames, globeAt, tunnelAt }) => {
+const result = await page.evaluate(async ({ frames, globeAt, tunnelAt, reduced }) => {
   // Vite serves these to the page; the paths are page URLs, not node modules.
   const inv = (await import("/src/invariants.ts" as string)) as typeof import("../src/invariants");
   const mb = (await import("/src/scene/motionBudget.ts" as string)) as typeof import("../src/scene/motionBudget");
   const fs = frames as Parameters<typeof inv.checkTrace>[0];
-  const maxJumpWorld = mb.worldJumpBound(fs[globeAt]!, fs[tunnelAt]!);
+  // Reduced motion runs the same flights within the REDUCED_MS crossfade.
+  const tr = (await import("/src/scene/transition.ts" as string)) as typeof import("../src/scene/transition");
+  const runMs = reduced ? tr.REDUCED_MS : tr.DIVE_MS;
+  const maxJumpWorld = mb.worldJumpBound(fs[globeAt]!, fs[tunnelAt]!, 1000 / 60, runMs);
   const opts = { maxJumpPx: mb.MAX_JUMP_PX, flickerWindowMs: mb.FLICKER_WINDOW_MS, maxJumpWorld };
   return { opts, violations: inv.checkTrace(fs, opts) };
-}, { frames, globeAt, tunnelAt });
+}, { frames, globeAt, tunnelAt, reduced: /reduced=1/.test(query) });
 if (traceOut) writeFileSync(traceOut, JSON.stringify(frames));
+const ids = new Set(frames.flatMap((f) => Object.keys((f as { entities: object }).entities)));
+const count = (prefix: string): number => [...ids].filter((id) => id.startsWith(prefix)).length;
+process.stdout.write(`entities: ${ids.size} (${count("g:")} g:, ${count("l:")} l:)\n`);
 process.stdout.write(
   `checkTrace: ${frames.length} frames, maxJumpPx=${result.opts.maxJumpPx}, ` +
   `maxJumpWorld=${result.opts.maxJumpWorld.toFixed(3)}, ${result.violations.length} violations\n`,
