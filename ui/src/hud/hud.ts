@@ -1,0 +1,143 @@
+import "./styles.css";
+import type { ConnState } from "../conn";
+import type { TraceState } from "../reducer";
+import { hopRow } from "./hops";
+import { installPanel } from "./install";
+import { sparkline } from "./sparkline";
+
+export interface HudHandlers {
+  onTrace(target: string): void;
+  onCancel(): void;
+  onFocusHop(ttl: number): void;
+  onDive(): void;
+  onSurface(): void;
+}
+export interface HudOptions {
+  /** True on the hosted page (not agent-served): enables the install panel. */
+  hosted: boolean;
+  userAgent?: string;
+}
+export type View = "globe" | "tunnel";
+
+export interface Hud {
+  render(state: TraceState, conn: ConnState): void;
+  /** Sync the Dive/Surface toggle with the scene's current view. */
+  setView(view: View): void;
+  /** Highlight a hop row (ttl), or clear with null. */
+  setFocus(ttl: number | null): void;
+  destroy(): void;
+}
+
+const ATTRIBUTION = "Geo: ip-api.com · ASN: Team Cymru · Map: Natural Earth";
+
+const make = <K extends keyof HTMLElementTagNameMap>(
+  doc: Document, tag: K, cls = "", text?: string,
+): HTMLElementTagNameMap[K] => {
+  const e = doc.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+
+const summary = (s: TraceState): string => {
+  if (s.status === "idle" || s.target === null) return "Enter a host to trace the route from here.";
+  const ip = s.resolvedIp ? " (" + s.resolvedIp + ")" : "";
+  const tail =
+    s.status === "done" ? (s.reached ? " · reached" : " · not reached") : s.status === "running" ? " · tracing…" : "";
+  return s.target + ip + tail;
+};
+
+export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud => {
+  const doc = root.ownerDocument;
+  const hud = make(doc, "div", "hud");
+
+  const form = make(doc, "form", "panel controls");
+  const input = make(doc, "input");
+  input.type = "text";
+  input.placeholder = "example.com or 1.1.1.1";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.setAttribute("aria-label", "Trace target");
+  const traceBtn = make(doc, "button", "trace", "Trace");
+  traceBtn.type = "submit";
+  const chip = make(doc, "span", "chip");
+  const head = make(doc, "div", "head");
+  head.append(make(doc, "span", "brand", "Lightpath"), chip);
+  const row = make(doc, "div", "input-row");
+  row.append(input, traceBtn);
+  form.append(head, row);
+
+  const sheet = make(doc, "section", "panel sheet");
+  const status = make(doc, "p", "summary");
+  const viewBtn = make(doc, "button", "view", "Dive");
+  viewBtn.type = "button";
+  const sheetHead = make(doc, "div", "sheet-head");
+  sheetHead.append(status, viewBtn);
+  const error = make(doc, "p", "error");
+  error.hidden = true;
+  const spark = make(doc, "div", "spark-wrap");
+  const list = make(doc, "ol", "hops");
+  sheet.append(sheetHead, error, spark, list, make(doc, "p", "attribution", ATTRIBUTION));
+
+  const ua = opts.userAgent ?? (typeof navigator === "undefined" ? "" : navigator.userAgent);
+  const install = installPanel(doc, ua);
+  hud.append(form, install, sheet);
+  root.append(hud);
+
+  let view: View = "globe";
+  let running = false;
+  let connected = false;
+  let focus: number | null = null;
+
+  const syncButtons = (): void => {
+    traceBtn.textContent = running ? "Cancel" : "Trace";
+    traceBtn.disabled = !running && !connected;
+    viewBtn.textContent = view === "globe" ? "Dive" : "Surface";
+  };
+  const applyFocus = (): void =>
+    list
+      .querySelectorAll<HTMLElement>(".hop")
+      .forEach((r) => r.classList.toggle("focus", r.dataset.ttl === String(focus)));
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (running) return h.onCancel();
+    const target = input.value.trim();
+    if (target !== "") h.onTrace(target);
+  });
+  viewBtn.addEventListener("click", () => (view === "globe" ? h.onDive() : h.onSurface()));
+  const focusHop = (ttl: number): void => {
+    focus = ttl;
+    applyFocus();
+    h.onFocusHop(ttl);
+  };
+
+  return {
+    render(state, conn) {
+      running = state.status === "running";
+      connected = conn.status === "connected";
+      chip.textContent = conn.status;
+      chip.className = "chip " + conn.status;
+      status.textContent = summary(state);
+      error.hidden = state.error === null;
+      error.textContent = state.error?.message ?? "";
+      install.hidden = !(opts.hosted && conn.status !== "connected" && conn.failures > 0);
+      sheet.classList.toggle("empty", state.hops.length === 0);
+      list.replaceChildren(...state.hops.map((hop) => hopRow(doc, hop, focusHop)));
+      spark.replaceChildren(...(state.hops.length > 1 ? [sparkline(doc, state.hops.map((x) => x.probes))] : []));
+      applyFocus();
+      syncButtons();
+    },
+    setView(v) {
+      view = v;
+      syncButtons();
+    },
+    setFocus(ttl) {
+      focus = ttl;
+      applyFocus();
+    },
+    destroy() {
+      hud.remove();
+    },
+  };
+};
