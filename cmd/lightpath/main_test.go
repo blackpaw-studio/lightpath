@@ -475,3 +475,15 @@ func TestReplaySmokeE2EFixtures(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionFlagPrintsVersionAndExitsWithoutListening(t *testing.T) {
+	var out, errOut bytes.Buffer
+	d, _ := testDeps(&errOut)
+	d.stdout = &out
+	if err := run(context.Background(), []string{"--version"}, d); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "lightpath "+version+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
