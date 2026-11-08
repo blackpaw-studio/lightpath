@@ -24,7 +24,8 @@ func gen(t *testing.T) string {
 	t.Helper()
 	var buf bytes.Buffer
 	carriers := []Carrier{{Code: "chcgil", City: "Chicago", Lat: 41.88, Lon: -87.63}}
-	if err := Generate(strings.NewReader(sampleCSV), carriers, &buf); err != nil {
+	metros := []Carrier{{Code: "nyc", City: "New York", Lat: 40.71, Lon: -74.01}}
+	if err := Generate(strings.NewReader(sampleCSV), carriers, metros, &buf); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 	return buf.String()
@@ -32,7 +33,7 @@ func gen(t *testing.T) string {
 
 func TestGenerateKeepsOnlyScheduledLargeAndMediumWithIATA(t *testing.T) {
 	out := gen(t)
-	for _, want := range []string{`"ord":`, `"fra":`, `"smv":`, `"chcgil":`} {
+	for _, want := range []string{`"ord":`, `"fra":`, `"smv":`, `"chcgil":`, "var metroHints", `"nyc":`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %s", want)
 		}
@@ -68,7 +69,7 @@ func TestGenerateIsValidGoAndDeterministic(t *testing.T) {
 }
 
 func TestGenerateRejectsMissingColumns(t *testing.T) {
-	err := Generate(strings.NewReader("a,b\n1,2\n"), nil, &bytes.Buffer{})
+	err := Generate(strings.NewReader("a,b\n1,2\n"), nil, nil, &bytes.Buffer{})
 	if err == nil {
 		t.Error("expected an error for a CSV without the expected columns")
 	}
@@ -86,6 +87,22 @@ func TestCuratedCarrierCodesAreWellFormed(t *testing.T) {
 		seen[c.Code] = true
 		if c.Lat < -90 || c.Lat > 90 || c.Lon < -180 || c.Lon > 180 || c.City == "" {
 			t.Errorf("carrier %q has bad data: %+v", c.Code, c)
+		}
+	}
+}
+
+func TestCuratedMetroCodesAreWellFormed(t *testing.T) {
+	seen := map[string]bool{}
+	for _, c := range metroCodes {
+		if len(c.Code) != 3 || c.Code != strings.ToLower(c.Code) {
+			t.Errorf("metro code %q must be 3 lowercase chars", c.Code)
+		}
+		if seen[c.Code] {
+			t.Errorf("duplicate metro code %q", c.Code)
+		}
+		seen[c.Code] = true
+		if c.Lat < -90 || c.Lat > 90 || c.Lon < -180 || c.Lon > 180 || c.City == "" {
+			t.Errorf("metro %q has bad data: %+v", c.Code, c)
 		}
 	}
 }

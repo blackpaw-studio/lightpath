@@ -19,6 +19,13 @@ var stopTokens = setOf(
 	"cust", "rtr", "lsr", "ear", "ccr", "csr", "cr", "br", "ar", "er", "pe", "ce",
 	"ae", "ge", "xe", "et", "fe", "te", "hu", "po", "lo", "so", "gi", "gw", "fw", "sw",
 	"bb", "ip", "ipv", "tel", "mpr", "ibr", "dc", "pod", "tor", "sfp", "mx", "qfx",
+	// Access-network and device words that are also IATA codes.
+	"ppp", "isp", "acc", "agr", "cor", "res", "cab", "bar", "lns", "msr", "nas", "ont",
+	"sub", "man", "reg", "per", "asr", "nap", "pni", "ixp", "sys", "svc", "pub", "ded",
+	"cbr", "usr", "sat", "bus", "tst", "stg", "kab", "mob", "gsm", "wls", "mpl", "stc",
+	"abr", "pri", "cdp", "mgm", "vps", "cld", "brs", "ras", "ccs", "arc", "mme", "hss",
+	"bgw", "csw", "asw", "esr", "ixa", "ixb", "ixc", "cxr", "ixr", "acx", "spi", "lea",
+	"vds",
 )
 
 func setOf(items ...string) map[string]struct{} {
@@ -34,10 +41,11 @@ func setOf(items ...string) map[string]struct{} {
 var secondLevelLabels = setOf("co", "com", "net", "org", "gov", "edu", "ac", "ne", "or", "go")
 
 // HintFor infers a location from a reverse-DNS name. It checks labels
-// right-to-left (nearest the registrable domain first) and matches either a
-// curated 6-character carrier city code or a whole-token IATA airport code. A
-// single label in front of the registrable domain is too ambiguous for IATA
-// codes ("lax.example.com") and only carrier codes may match there.
+// right-to-left (nearest the registrable domain first) and matches a curated
+// 6-character carrier city code, a curated 3-letter metro code ("nyc", "ash"),
+// or a whole-token IATA airport code; metro codes win over airports. A single
+// label in front of the registrable domain is too ambiguous for 3-letter codes
+// ("lax.example.com") and only carrier codes may match there.
 func HintFor(host string) (Hint, bool) {
 	host = strings.ToLower(strings.Trim(strings.TrimSpace(host), "."))
 	if host == "" {
@@ -55,6 +63,9 @@ func HintFor(host string) (Hint, bool) {
 			}
 			if _, stop := stopTokens[tok]; stop {
 				continue
+			}
+			if h, ok := metroHints[tok]; ok {
+				return h, true
 			}
 			if h, ok := iataHints[tok]; ok {
 				return h, true

@@ -73,3 +73,29 @@ var carrierCodes = []Carrier{
 	{"sosapl", "São Paulo", -23.55, -46.63},
 	{"jhbgza", "Johannesburg", -26.20, 28.05},
 }
+
+// metroCodes lists 3-letter metro codes carriers use in router names
+// ("be2.nyc.example.net"). Most are IATA metropolitan-area codes rather than
+// airports; "ash" (Ashburn) is a common carrier abbreviation. They are matched
+// with the same caution as IATA airport codes and win over them.
+var metroCodes = []Carrier{
+	{"nyc", "New York", 40.71, -74.01},
+	{"was", "Washington", 38.91, -77.04},
+	{"ash", "Ashburn", 39.04, -77.49},
+	{"chi", "Chicago", 41.88, -87.63},
+	{"yto", "Toronto", 43.65, -79.38},
+	{"ymq", "Montreal", 45.50, -73.57},
+	{"lon", "London", 51.51, -0.13},
+	{"par", "Paris", 48.86, 2.35},
+	{"mil", "Milan", 45.46, 9.19},
+	{"rom", "Rome", 41.90, 12.50},
+	{"sto", "Stockholm", 59.33, 18.07},
+	{"mow", "Moscow", 55.76, 37.62},
+	{"tyo", "Tokyo", 35.68, 139.69},
+	{"osa", "Osaka", 34.69, 135.50},
+	{"sel", "Seoul", 37.57, 126.98},
+	{"bjs", "Beijing", 39.90, 116.41},
+	{"sao", "São Paulo", -23.55, -46.63},
+	{"rio", "Rio de Janeiro", -22.91, -43.17},
+	{"bue", "Buenos Aires", -34.60, -58.38},
+}

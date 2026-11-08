@@ -3315,3 +3315,26 @@ var carrierHints = map[string]Hint{
 	"washdc": {Lat: 38.91, Lon: -77.04, City: "Washington"},
 	"zurcch": {Lat: 47.38, Lon: 8.54, City: "Zurich"},
 }
+
+// metroHints maps curated 3-letter metro codes to their city.
+var metroHints = map[string]Hint{
+	"ash": {Lat: 39.04, Lon: -77.49, City: "Ashburn"},
+	"bjs": {Lat: 39.9, Lon: 116.41, City: "Beijing"},
+	"bue": {Lat: -34.6, Lon: -58.38, City: "Buenos Aires"},
+	"chi": {Lat: 41.88, Lon: -87.63, City: "Chicago"},
+	"lon": {Lat: 51.51, Lon: -0.13, City: "London"},
+	"mil": {Lat: 45.46, Lon: 9.19, City: "Milan"},
+	"mow": {Lat: 55.76, Lon: 37.62, City: "Moscow"},
+	"nyc": {Lat: 40.71, Lon: -74.01, City: "New York"},
+	"osa": {Lat: 34.69, Lon: 135.5, City: "Osaka"},
+	"par": {Lat: 48.86, Lon: 2.35, City: "Paris"},
+	"rio": {Lat: -22.91, Lon: -43.17, City: "Rio de Janeiro"},
+	"rom": {Lat: 41.9, Lon: 12.5, City: "Rome"},
+	"sao": {Lat: -23.55, Lon: -46.63, City: "São Paulo"},
+	"sel": {Lat: 37.57, Lon: 126.98, City: "Seoul"},
+	"sto": {Lat: 59.33, Lon: 18.07, City: "Stockholm"},
+	"tyo": {Lat: 35.68, Lon: 139.69, City: "Tokyo"},
+	"was": {Lat: 38.91, Lon: -77.04, City: "Washington"},
+	"ymq": {Lat: 45.5, Lon: -73.57, City: "Montreal"},
+	"yto": {Lat: 43.65, Lon: -79.38, City: "Toronto"},
+}

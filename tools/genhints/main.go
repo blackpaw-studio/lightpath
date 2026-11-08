@@ -44,7 +44,7 @@ func run(args []string) error {
 	}
 	defer r.Close()
 	var buf strings.Builder
-	if err := Generate(r, carrierCodes, &buf); err != nil {
+	if err := Generate(r, carrierCodes, metroCodes, &buf); err != nil {
 		return err
 	}
 	return os.WriteFile(*out, []byte(buf.String()), 0o644)
@@ -74,8 +74,9 @@ type airport struct {
 }
 
 // Generate reads OurAirports CSV from r and writes the Go source of the hint
-// tables (large and medium airports with an IATA code and scheduled service, plus carriers) to w.
-func Generate(r io.Reader, carriers []Carrier, w io.Writer) error {
+// tables (large and medium airports with an IATA code and scheduled service,
+// plus curated carrier and metro codes) to w.
+func Generate(r io.Reader, carriers, metros []Carrier, w io.Writer) error {
 	airports, err := readAirports(r)
 	if err != nil {
 		return err
@@ -90,20 +91,26 @@ func Generate(r io.Reader, carriers []Carrier, w io.Writer) error {
 		fmt.Fprintf(&b, "\t%q: {Lat: %s, Lon: %s, City: %q},\n", a.iata, num(a.lat), num(a.lon), a.city)
 	}
 	b.WriteString("}\n\n")
-	b.WriteString("// carrierHints maps curated 6-character carrier city codes to their city.\n")
-	b.WriteString("var carrierHints = map[string]Hint{\n")
-	sorted := append([]Carrier(nil), carriers...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Code < sorted[j].Code })
-	for _, c := range sorted {
-		fmt.Fprintf(&b, "\t%q: {Lat: %s, Lon: %s, City: %q},\n", c.Code, num(c.Lat), num(c.Lon), c.City)
-	}
-	b.WriteString("}\n")
+	writeCurated(&b, "carrierHints", "curated 6-character carrier city codes", carriers)
+	b.WriteString("\n")
+	writeCurated(&b, "metroHints", "curated 3-letter metro codes", metros)
 	src, err := format.Source([]byte(b.String()))
 	if err != nil {
 		return fmt.Errorf("format generated source: %w", err)
 	}
 	_, err = w.Write(src)
 	return err
+}
+
+func writeCurated(b *strings.Builder, name, what string, entries []Carrier) {
+	fmt.Fprintf(b, "// %s maps %s to their city.\n", name, what)
+	fmt.Fprintf(b, "var %s = map[string]Hint{\n", name)
+	sorted := append([]Carrier(nil), entries...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Code < sorted[j].Code })
+	for _, c := range sorted {
+		fmt.Fprintf(b, "\t%q: {Lat: %s, Lon: %s, City: %q},\n", c.Code, num(c.Lat), num(c.Lon), c.City)
+	}
+	b.WriteString("}\n")
 }
 
 // num formats a coordinate rounded to two decimals (~1 km) without trailing zeros.
