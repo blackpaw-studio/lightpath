@@ -15,6 +15,9 @@ Orchestrator's tracking list. Each item says where it gets resolved.
 - **M2-E review #4 (hops moving mid-stream)** → globe lane F follow-up, plus M3:
   - A late `hop.update` geo, or re-estimation, moves nodes. These moves must tween, never snap.
   - E2E records frames while hops stream in, not only during dive/surface.
+- **M2-H review #1 (scene reset on disconnect)** → M3 wiring:
+  - When the connection goes from connected to disconnected, feed a synthetic reset or interrupted state into the reducer so the scene stops showing an active trace.
+  - The HUD already handles this (429415c).
 - **M2-E review #6 (no trace id)** → server/enricher security review + S1.15:
   - Drop enrichment updates once the trace ctx is cancelled.
   - The session must never emit an event from a previous trace after a new `trace.started`.
