@@ -9,7 +9,7 @@ import { projectFrame, type TraceFrame } from "../testhooks";
 import { createGlobeShell } from "./atmosphere";
 import { createBackdrop } from "./backdrop";
 import { createBloom, type Bloom } from "./bloom";
-import { createCameraRig, type CameraRig } from "./camera";
+import { applyFraming, createCameraRig, type CameraRig } from "./camera";
 import type { BloomTier } from "./frameBudget";
 import { createGlobePoseSource, ORIGIN_KEY, rotateY, type PoseMap, type PoseSource } from "./globePoses";
 import { createArcs, type ArcInfo } from "./arcs";
@@ -117,6 +117,8 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
   let now = 0;
   let lastFraming = "";
   let fadeStart: number | null = null;
+  /** A reduced-motion camera cut happened during the latest update. */
+  let cutThisFrame = false;
 
   const pixelWorld = (): number => {
     const cam = rig.camera;
@@ -139,8 +141,10 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     lastFraming = key;
     if (!layout.origin) return;
     const pts: Vec3[] = [layout.origin, ...layout.hops.map((h) => h.pos)].map((p) => rotateY(p, rotation));
-    rig.frame(pts, opts.reducedMotion);
-    if (opts.reducedMotion) fadeStart = now;
+    if (applyFraming(rig, pts, opts.reducedMotion)) {
+      cutThisFrame = true;
+      fadeStart = now;
+    }
   };
 
   const project = (p: Vec3): { x: number; y: number; inFrustum: boolean } => {
@@ -165,6 +169,7 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     },
     update: (dtMs, nowMs) => {
       now = nowMs;
+      cutThisFrame = false;
       if (state.status !== "running" && !opts.reducedMotion) rotation += (IDLE_ROTATION * dtMs) / 1000;
       poses = poseSource({ layout, nowMs, dtMs, reducedMotion: opts.reducedMotion, rotationY: rotation });
       reframe();
@@ -195,7 +200,7 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
       bloom.setSize(w, h);
     },
     poses: () => poses,
-    trace: () => projectFrame(now, poses, project),
+    trace: () => ({ ...projectFrame(now, poses, project), ...(cutThisFrame ? { cut: true } : {}) }),
     setPoseSource: (s) => { poseSource = s; },
     setGlobeOpacity: (o) => {
       shell.setOpacity(o);
