@@ -33,6 +33,9 @@ Orchestrator's tracking list. Each item says where it gets resolved.
   - `trace.done` can be sent without `trace.started` when traceroute exits 0 with no output.
   - The runner's output pipe can be held open by descendant processes. This needs atypical traceroute behaviour.
   - Replay fixture size and event count are unbounded. The fixture is CLI-selected, so it is trusted input.
+- **Globe fixes vs tunnel lane** → tunnel merge and review:
+  - The tunnel branched from bf050b1, before the globe fixes. When it merges, it must pick up `TraceState.generation` and the `cut` frame field.
+  - Globe PoseMaps are double-buffered and reused each frame. `poses.ts` must not hold a PoseMap across frames.
 - **M2-H review #1 (scene reset on disconnect)** → M3 wiring:
   - When the connection goes from connected to disconnected, feed a synthetic reset or interrupted state into the reducer so the scene stops showing an active trace.
   - The HUD already handles this (429415c).
