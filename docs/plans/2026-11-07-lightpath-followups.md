@@ -15,6 +15,12 @@ Orchestrator's tracking list. Each item says where it gets resolved.
 - **M2-E review #4 (hops moving mid-stream)** → globe lane F follow-up, plus M3:
   - A late `hop.update` geo, or re-estimation, moves nodes. These moves must tween, never snap.
   - E2E records frames while hops stream in, not only during dive/surface.
+- **M1 security re-review caveat** → S1.15:
+  - `cmd/lightpath/main.go:185` skips `srv.Wait` when `http.Server.Shutdown` returns an error.
+  - Always cancel the app ctx and Wait, even on Shutdown error.
+- **Accepted risks (for the PR body):**
+  - The runner's output pipe can be held open by descendant processes. This needs atypical traceroute behaviour.
+  - Replay fixture size and event count are unbounded. The fixture is CLI-selected, so it is trusted input.
 - **M2-H review #1 (scene reset on disconnect)** → M3 wiring:
   - When the connection goes from connected to disconnected, feed a synthetic reset or interrupted state into the reducer so the scene stops showing an active trace.
   - The HUD already handles this (429415c).
