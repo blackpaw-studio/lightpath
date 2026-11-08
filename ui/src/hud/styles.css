@@ -1,0 +1,126 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap");
+
+.hud {
+  --glass: #0b1020cc;
+  --edge: rgba(150, 190, 255, 0.16);
+  --text: #e6ecff;
+  --dim: #8b97b8;
+  --cyan: #22e6ff;
+  --violet: #9b5cff;
+  --red: #ff3b4f;
+  --sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  box-sizing: border-box;
+  font-family: var(--sans);
+  color: var(--text);
+  overflow: hidden;
+}
+.hud *, .hud *::before, .hud *::after { box-sizing: border-box; }
+.hud .panel {
+  pointer-events: auto;
+  width: min(380px, 100%);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  backdrop-filter: blur(14px) saturate(1.3);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  padding: 14px;
+}
+.hud [hidden] { display: none !important; }
+
+.head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.brand {
+  font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; font-size: 12px;
+  background: linear-gradient(90deg, var(--cyan), var(--violet));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.chip {
+  font-family: var(--mono); font-size: 11px; padding: 3px 9px 3px 20px; border-radius: 999px;
+  border: 1px solid var(--edge); color: var(--dim); position: relative;
+}
+.chip::before {
+  content: ""; position: absolute; left: 8px; top: 50%; width: 6px; height: 6px; margin-top: -3px;
+  border-radius: 50%; background: currentColor;
+}
+.chip.connected { color: #5af0a8; }
+.chip.connecting { color: #ffd166; }
+.chip.disconnected { color: var(--red); }
+
+.input-row { display: flex; gap: 8px; }
+.hud input {
+  flex: 1; min-width: 0; font: 500 14px var(--mono); color: var(--text);
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--edge); border-radius: 10px;
+  padding: 10px 12px; outline: none;
+}
+.hud input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(34, 230, 255, 0.15); }
+.hud button {
+  font: 600 13px var(--sans); color: #04101a; cursor: pointer; border: 0; border-radius: 10px;
+  padding: 10px 16px; background: linear-gradient(135deg, var(--cyan), #7aa8ff);
+}
+.hud button:disabled { opacity: 0.4; cursor: not-allowed; }
+.hud button:focus-visible, .hop:focus-visible, .agent-link:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.hud button.view, .hud button.copy {
+  color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--edge);
+  padding: 6px 12px; font-size: 12px;
+}
+
+.install h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.install .step { margin: 10px 0 4px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.code-row { display: flex; gap: 8px; align-items: center; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 8px 8px 12px; }
+.code-row code { flex: 1; min-width: 0; font: 400 12px var(--mono); color: var(--cyan); white-space: normal; word-break: break-all; line-height: 1.5; }
+.install .hint { font-size: 12.5px; line-height: 1.45; color: var(--dim); margin: 12px 0 8px; }
+.agent-link { color: var(--cyan); font-size: 13px; font-weight: 500; }
+
+.sheet { display: flex; flex-direction: column; min-height: 0; max-height: calc(100% - 140px); }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.summary { margin: 0; font-size: 13px; color: var(--dim); overflow-wrap: anywhere; }
+.error { margin: 8px 0 0; font-size: 13px; color: var(--red); overflow-wrap: anywhere; }
+.spark-wrap { color: var(--violet); margin-top: 8px; }
+.spark-wrap:empty { display: none; }
+.spark { width: 100%; height: 36px; display: block; }
+.hops { list-style: none; margin: 10px 0 0; padding: 0; overflow-y: auto; min-height: 0; flex: 1; }
+.sheet.empty .hops { display: none; }
+.hop {
+  padding: 8px 10px; margin-bottom: 4px; border-radius: 10px; cursor: pointer;
+  border: 1px solid transparent; border-left: 3px solid var(--rtt, #4a5266);
+  background: rgba(255, 255, 255, 0.03);
+}
+.hop:hover, .hop.focus { background: rgba(255, 255, 255, 0.08); border-color: var(--edge); border-left-color: var(--rtt, #4a5266); }
+.hop-top, .hop-sub { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.hop-top { font-family: var(--mono); font-size: 13px; }
+.ttl { color: var(--dim); min-width: 1.6em; }
+.ip { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.badge { font: 500 10px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid; }
+.badge.measured { color: #5af0a8; border-color: rgba(90, 240, 168, 0.4); }
+.badge.estimated { color: #ffd166; border-color: rgba(255, 209, 102, 0.4); border-style: dashed; }
+.hop-sub { flex-wrap: wrap; row-gap: 2px; font-size: 11.5px; color: var(--dim); margin-top: 3px; }
+.hop-sub span:empty { display: none; }
+.hop-sub .host { overflow-wrap: anywhere; }
+.hop-sub .rtt { font-family: var(--mono); color: var(--text); margin-left: auto; white-space: nowrap; }
+.attribution { margin: 10px 0 0; font-size: 10.5px; color: var(--dim); letter-spacing: 0.03em; }
+
+/* Phones: panels become a bottom sheet; controls stay on top. */
+@media (max-width: 639px) {
+  .hud { padding: 10px; gap: 8px; }
+  .hud .panel { width: 100%; border-radius: 14px; padding: 12px; }
+  .hud .sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; width: 100%; max-height: 46%;
+    border-radius: 18px 18px 0 0; border-bottom: 0; padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .hud .sheet::before {
+    content: ""; align-self: center; width: 36px; height: 4px; border-radius: 2px;
+    background: var(--edge); margin: -4px 0 8px;
+  }
+  .hud .install { position: relative; z-index: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .hud * { transition: none !important; animation: none !important; } }
