@@ -301,3 +301,22 @@ func TestCancelledContextStopsEnrichment(t *testing.T) {
 		t.Errorf("messages = %d, want only the hop", n)
 	}
 }
+
+// A lookup can finish just as the trace is cancelled: it passes its own
+// ctx check, then waits for the hop lock. The update must still be dropped.
+func TestMutateDropsUpdatesAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	col := newCollector()
+	s := &hopState{ctx: ctx, hop: protocol.Hop{TTL: 3}, emit: col.emit, hint: HintFor}
+	s.applyASN(ASInfo{ASN: 64500, Org: "Example"})
+	if n := len(col.snapshot()); n != 1 {
+		t.Fatalf("live update count = %d, want 1", n)
+	}
+	cancel()
+	s.applyHost("be2.nyc.example.net")
+	s.applyGeo(Geo{Lat: 1, Lon: 2, City: "X"})
+	s.applyOrigin(protocol.Origin{Lat: new(1.0), Lon: new(2.0)})
+	if n := len(col.snapshot()); n != 1 {
+		t.Errorf("updates after cancel = %d, want none", n-1)
+	}
+}

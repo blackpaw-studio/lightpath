@@ -57,12 +57,15 @@ func New(cfg Config) *Enricher {
 // emit is called from the caller's goroutine for the hop and from lookup
 // goroutines for updates, always serialised per hop. It must not block
 // indefinitely or call back into Enrich. Cancelling ctx abandons outstanding
-// lookups without further updates.
+// lookups: no update starts emitting once ctx is done (the check runs under
+// the hop lock), but one already inside emit may still be finishing. A caller
+// that needs a hard boundary (e.g. before starting the next trace) must
+// cancel ctx and then call wait; after wait returns, emit is never called again.
 //
 // Precedence for location: local (origin) > hostname hint > API. Hostname
 // hints never apply to local hops and win over API geo in either arrival order.
 func (e *Enricher) Enrich(ctx context.Context, hop protocol.Hop, emit func(protocol.ServerMsg)) (wait func()) {
-	s := &hopState{hop: hop, emit: emit, hint: e.cfg.Hint}
+	s := &hopState{ctx: ctx, hop: hop, emit: emit, hint: e.cfg.Hint}
 	s.hop.GeoSource = protocol.GeoEstimated
 
 	addr, err := netip.ParseAddr(deref(hop.IP))
@@ -123,6 +126,7 @@ func deref(s *string) string {
 // hopState is the evolving view of one hop; every mutation yields at most one
 // update holding just the fields that changed.
 type hopState struct {
+	ctx       context.Context // the trace; updates stop once it is done
 	mu        sync.Mutex
 	hop       protocol.Hop
 	local     bool
@@ -170,9 +174,13 @@ func (s *hopState) adoptOrigin(o protocol.Origin, ch change) bool {
 }
 
 // mutate runs f under the hop lock and emits the resulting diff, if any.
+// Nothing changes or emits once the trace ctx is done.
 func (s *hopState) mutate(f func(ch change)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.ctx.Err() != nil {
+		return
+	}
 	ch := change{}
 	f(ch)
 	if len(ch) > 0 {
