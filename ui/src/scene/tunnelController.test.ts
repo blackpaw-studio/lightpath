@@ -22,10 +22,18 @@ const doneState: TraceState = sampleTimeline.reduce((s, [, m]) => reduce(s, m), 
 interface Sim {
   readonly ctl: TunnelController;
   run(ms: number): Frame[];
+  /** A new reducer state (e.g. a new trace generation) for both the controller and the pose source. */
+  setState(state: TraceState): void;
+  /** Camera position of every frame run so far. */
+  readonly camTrail: Vec3[];
 }
 
+const stepLen = (trail: readonly Vec3[]): number[] =>
+  trail.slice(1).map((p, i) => Math.hypot(p[0] - trail[i]![0], p[1] - trail[i]![1], p[2] - trail[i]![2]));
+
 const createSim = (w: number, h: number, reducedMotion: boolean, state: TraceState = doneState): Sim => {
-  const layout = globeLayout(state);
+  let layout = globeLayout(state);
+  const camTrail: Vec3[] = [];
   const rig = createCameraRig(w / h);
   if (layout.origin) rig.frame([layout.origin, ...layout.hops.map((x) => x.pos)], true);
   const rigPos: Vec3 = [rig.camera.position.x, rig.camera.position.y, rig.camera.position.z];
@@ -45,7 +53,9 @@ const createSim = (w: number, h: number, reducedMotion: boolean, state: TraceSta
     now += DT;
     ctl.advance(DT);
     const poses = ctl.poseSource({ layout, nowMs: now, dtMs: DT, reducedMotion, rotationY: 0 });
-    place(ctl.camera());
+    const pose = ctl.camera();
+    camTrail.push(pose.pos);
+    place(pose);
     const entities = Object.fromEntries([...poses].map(([k, p]) => {
       const v = new Vector3(...p.pos).project(cam);
       const inFrustum = Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 && v.z >= -1 && v.z <= 1;
@@ -56,7 +66,14 @@ const createSim = (w: number, h: number, reducedMotion: boolean, state: TraceSta
     }));
     return { tMs: now, cut: ctl.cut(), entities };
   };
-  return { ctl, run: (ms) => Array.from({ length: Math.round(ms / DT) }, frame) };
+  return {
+    ctl, camTrail,
+    run: (ms) => Array.from({ length: Math.round(ms / DT) }, frame),
+    setState: (s) => {
+      layout = globeLayout(s, layout.origin);
+      ctl.setState(s);
+    },
+  };
 };
 
 /** Trace options with the world bound measured on this simulation's own globe and tunnel frames. */
@@ -136,6 +153,23 @@ describe("tunnel controller", () => {
     sim.ctl.frame()!.origin.forEach((x, i) => expect(x).toBeCloseTo(before[i]!, 12));
     const home = tunnelPoint(sim.ctl.frame()!, S_HOME);
     sim.ctl.camera().pos.forEach((x, i) => expect(x).toBeCloseTo(home[i]!, 9));
+  });
+
+  it("a new trace started deep in the tunnel glides the camera home along the spline, no teleport", () => {
+    const sim = createSim(1280, 720, false);
+    sim.run(100);
+    sim.ctl.dive();
+    sim.run(DIVE_MS + 300);
+    sim.ctl.focusHop(12);
+    sim.run(4000);
+    const restarted = sampleTimeline.reduce((s, [, m]) => reduce(s, m), doneState);
+    expect(restarted.generation).toBe(doneState.generation + 1);
+    const from = sim.camTrail.length - 1;
+    sim.setState(restarted);
+    sim.run(4000);
+    const home = tunnelPoint(sim.ctl.frame()!, S_HOME);
+    sim.ctl.camera().pos.forEach((x, i) => expect(x).toBeCloseTo(home[i]!, 3));
+    expect(Math.max(...stepLen(sim.camTrail.slice(from)))).toBeLessThan(0.25);
   });
 
   it("focusHop outside the tunnel is declined (the globe view owns it)", () => {

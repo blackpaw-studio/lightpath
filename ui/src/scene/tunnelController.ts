@@ -98,6 +98,9 @@ export const createTunnelController = (deps: TunnelControllerDeps): TunnelContro
     poseSource: (input) => (poses = tunnel.source(input)),
     setState: (s) => {
       if (s === state) return;
+      // A new trace restarts the gates near the mouth; glide the camera back there
+      // along the spline rather than leaving it deep in an empty tube.
+      if (state && s.generation !== state.generation) camGoal = S_HOME;
       state = s;
       gates = tunnelGates(s);
     },
