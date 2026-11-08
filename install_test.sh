@@ -107,6 +107,29 @@ else
   fail "falls back to ~/.local/bin with PATH hint (code=$code) $out"
 fi
 
+# Staging must not follow a pre-planted lightpath.new symlink.
+dest="$TMP/dest-symlink"; mkdir -p "$dest"
+printf 'sentinel' >"$TMP/sentinel"
+ln -s "$TMP/sentinel" "$dest/lightpath.new"
+run_install Linux x86_64 "file://$rel" "$dest"
+if [ "$code" -eq 0 ] && [ "$(cat "$TMP/sentinel")" = sentinel ] && [ "$("$dest/lightpath" 2>/dev/null)" = "lightpath-linux-amd64" ] \
+  && [ -z "$(ls -A "$dest" | grep -v -e '^lightpath$' -e '^lightpath.new$')" ]; then
+  pass "install ignores planted staging symlink and leaves no temp dirs"
+else
+  fail "install ignores planted staging symlink (code=$code) $out"
+fi
+
+# LIGHTPATH_FORCE_USER_DIR only forces the user dir when exactly 1.
+sysdir="$TMP/sysbin"; mkdir -p "$sysdir"
+for v in 0 1; do
+  rm -rf "$TMP/home/.local" "$sysdir/lightpath"
+  STUB_S=Linux STUB_M=x86_64 PATH="$TMP/stub:$PATH" HOME="$TMP/home" \
+    LIGHTPATH_BASE_URL="file://$rel" LIGHTPATH_SYSTEM_DIR="$sysdir" LIGHTPATH_FORCE_USER_DIR=$v sh "$INSTALL" >/dev/null 2>&1
+  if [ "$v" = 0 ] && [ -x "$sysdir/lightpath" ]; then pass "FORCE_USER_DIR=0 does not force user dir"
+  elif [ "$v" = 1 ] && [ -x "$TMP/home/.local/bin/lightpath" ] && [ ! -e "$sysdir/lightpath" ]; then pass "FORCE_USER_DIR=1 forces user dir"
+  else fail "FORCE_USER_DIR=$v behavior"; fi
+done
+
 # traceroute warning when missing: hide it with a minimal PATH of required tools.
 mkdir -p "$TMP/minbin"
 for t in sh tar curl wget mkdir cp chmod mv rm mktemp grep awk cut sed shasum sha256sum id dirname tr head cat install ln; do

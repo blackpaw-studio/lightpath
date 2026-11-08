@@ -49,10 +49,11 @@ sha256_of() {
 }
 
 pick_install_dir() {
+  sys="${LIGHTPATH_SYSTEM_DIR:-/usr/local/bin}" # override exists for tests
   if [ -n "${LIGHTPATH_INSTALL_DIR:-}" ]; then
     echo "$LIGHTPATH_INSTALL_DIR"
-  elif [ -z "${LIGHTPATH_FORCE_USER_DIR:-}" ] && [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
-    echo /usr/local/bin
+  elif [ "${LIGHTPATH_FORCE_USER_DIR:-}" != 1 ] && [ -d "$sys" ] && [ -w "$sys" ]; then
+    echo "$sys"
   else
     echo "$HOME/.local/bin"
   fi
@@ -80,9 +81,11 @@ main() {
 
   dir=$(pick_install_dir)
   mkdir -p "$dir" || die "cannot create $dir"
-  cp "$tmp/x/lightpath" "$dir/lightpath.new" || die "cannot write to $dir"
-  chmod 755 "$dir/lightpath.new"
-  mv -f "$dir/lightpath.new" "$dir/lightpath"
+  stage=$(mktemp -d "$dir/.lightpath.XXXXXX") || die "cannot write to $dir"
+  trap 'rm -rf "$tmp" "$stage"' EXIT INT TERM
+  cp "$tmp/x/lightpath" "$stage/lightpath" || die "cannot write to $dir"
+  chmod 755 "$stage/lightpath"
+  mv -f "$stage/lightpath" "$dir/lightpath" || die "cannot install to $dir"
   say "Installed $dir/lightpath"
 
   case ":$PATH:" in
