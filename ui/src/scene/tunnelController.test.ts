@@ -172,6 +172,19 @@ describe("tunnel controller", () => {
     expect(Math.max(...stepLen(sim.camTrail.slice(from)))).toBeLessThan(0.25);
   });
 
+  it("focusing a deep gate early in a dive moves the camera no faster than diving, then focusing", () => {
+    const peak = (focusAfterMs: number): number => {
+      const sim = createSim(1280, 720, false);
+      sim.run(100);
+      sim.ctl.dive();
+      sim.run(focusAfterMs);
+      expect(sim.ctl.focusHop(12)).toBe(true);
+      sim.run(DIVE_MS + 4000);
+      return Math.max(...stepLen(sim.camTrail));
+    };
+    expect(peak(200)).toBeLessThanOrEqual(peak(DIVE_MS + 300) * 1.05);
+  });
+
   it("focusHop outside the tunnel is declined (the globe view owns it)", () => {
     const sim = createSim(1280, 720, false);
     sim.run(10);
