@@ -63,16 +63,18 @@ const arrayOf = (c: Check): Check => (v) => Array.isArray(v) && v.every(c);
 const shape = (fields: Record<string, Check>): Check => (v) =>
   isObj(v) && Object.entries(fields).every(([k, c]) => k in v && c(v[k]));
 
-const probe = shape({ ip: nullable(str), rttMs: nullable(num) });
+// `satisfies` makes the compiler flag a field added to (or removed from) the
+// interfaces above until its check is added here too.
+const probe = shape({ ip: nullable(str), rttMs: nullable(num) } satisfies Record<keyof Probe, Check>);
 const origin = shape({
   publicIp: nullable(str), lat: nullable(num), lon: nullable(num),
   city: nullable(str), asn: nullable(int), org: nullable(str),
-});
-const hopFields: Record<string, Check> = {
+} satisfies Record<keyof Origin, Check>);
+const hopFields = {
   ip: nullable(str), host: nullable(str), asn: nullable(int), org: nullable(str),
   lat: nullable(num), lon: nullable(num), city: nullable(str),
   geoSource: oneOf(GEO_SOURCES), annotations: arrayOf(str),
-};
+} satisfies Record<keyof Omit<Hop, "ttl" | "probes">, Check>;
 
 const serverChecks: Record<string, Check> = {
   "trace.started": shape({ target: str, resolvedIp: nullable(str), origin }),

@@ -15,8 +15,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
-      - run: go vet ./...
-      - run: go test ./...
+      # Explicit list: ./... would descend into ui/node_modules.
+      - run: go vet ./cmd/... ./internal/... ./tools/... ./ui
+      - run: go test -race ./cmd/... ./internal/... ./tools/... ./ui
   ui:
     runs-on: ubuntu-latest
     defaults:
