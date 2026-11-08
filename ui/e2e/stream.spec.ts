@@ -33,7 +33,9 @@ test("restart: a cross-ocean relocation glides and a new trace replaces the old 
   expect(s).toMatchObject({ generation: 2, status: "done", target: "example.com" });
   expect(s.hops.map((h) => h.ttl)).toEqual([1, 2, 3, 4]);
   const last = frames[frames.length - 1]!;
-  expect(Object.keys(last.entities).sort()).toEqual(["0", "2:1", "2:2", "2:3", "2:4"]);
+  expect(Object.keys(last.entities).filter((k) => !k.includes("g:") && !k.includes("l:")).sort())
+    .toEqual(["0", "2:1", "2:2", "2:3", "2:4"]);
+  expect(Object.keys(last.entities).filter((k) => k.includes("g:")).sort()).toEqual(["2:g:1", "2:g:2", "2:g:3", "2:g:4", "g:0"]);
   await expect(page.locator(".hop")).toHaveCount(4);
 });
 

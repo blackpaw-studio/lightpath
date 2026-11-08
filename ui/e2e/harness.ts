@@ -100,16 +100,23 @@ export const stepLive = (page: Page, tailMs: number, maxMs = 30_000): Promise<Ge
     return frames;
   }, { dt: FRAME_MS, tailMs, maxMs });
 
+/** Hop ttl of a trace entity id: "5" (pose), "g:5" (drawn marker) or "l:5" (label). */
+export const ttlOf = (id: string): number => Number(id.replace(/^[gl]:/, ""));
+
+/** Pose entities only (the bare-ttl ids), without the g:/l: drawn marks. */
+export const poseIds = (f: Frame): string[] => Object.keys(f.entities).filter((k) => /^\d+$/.test(k)).sort();
+
 /**
  * Hop entities are keyed by ttl, which a new trace reuses: key them by
  * generation too so a restarted trace's hop 1 is a new entity, not a teleport
- * of the old one. The origin keeps its key: it is the same machine across traces.
+ * of the old one. The origin (pose, marker and label) keeps its key: it is the
+ * same machine across traces.
  */
 export const byGeneration = (frames: readonly GenFrame[]): Frame[] =>
   frames.map((f) => ({
     tMs: f.tMs,
     cut: f.cut,
-    entities: Object.fromEntries(Object.entries(f.entities).map(([k, e]) => [k === String(ORIGIN_KEY) ? k : `${f.gen}:${k}`, e])),
+    entities: Object.fromEntries(Object.entries(f.entities).map(([k, e]) => [ttlOf(k) === ORIGIN_KEY ? k : `${f.gen}:${k}`, e])),
   }));
 
 const dist = (a: readonly number[], b: readonly number[]): number => Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!);

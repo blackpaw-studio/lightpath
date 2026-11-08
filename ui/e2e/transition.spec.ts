@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { worldJumpBound } from "../src/scene/motionBudget";
+import { REDUCED_MS } from "../src/scene/transition";
 import { FIXTURES } from "./agents";
 import { call, expectSmooth, openApp, startTrace, step, traceOptions, waitForDone, type GenFrame } from "./harness";
 
@@ -36,6 +37,10 @@ test("dive and surface are one continuous move: no jumps, no flicker", async ({ 
   const maxJumpWorld = worldJumpBound(frames[globeAt]!, frames[tunnelAt]!);
   expect(maxJumpWorld).toBeGreaterThan(0);
   expect(frames.some((f) => f.cut)).toBe(false);
+  // Drawn marks are traced too: the dot→ring handoff and gate labels must not flicker.
+  const ids = new Set(frames.flatMap((f) => Object.keys(f.entities)));
+  expect([...ids].some((k) => k.startsWith("g:"))).toBe(true);
+  expect([...ids].some((k) => k.startsWith("l:"))).toBe(true);
   expectSmooth(frames, traceOptions(maxJumpWorld));
 });
 
@@ -46,7 +51,8 @@ test.describe("reduced motion", () => {
     const { frames, globeAt, tunnelAt } = await flight(page);
     // The camera cuts instead of flying: those frames are declared, so their screen jump is exempt.
     expect(frames.filter((f) => f.cut).length).toBeGreaterThanOrEqual(2);
-    expectSmooth(frames, traceOptions(worldJumpBound(frames[globeAt]!, frames[tunnelAt]!)));
+    // The same flights run within the REDUCED_MS crossfade, so the world bound uses that duration.
+    expectSmooth(frames, traceOptions(worldJumpBound(frames[globeAt]!, frames[tunnelAt]!, 1000 / 60, REDUCED_MS)));
     // No idle rotation: the origin does not move on the globe after the trace is done.
     const idle = frames.slice(0, globeAt + 1).map((f) => f.entities["0"]!.world!);
     expect(idle[idle.length - 1]).toEqual(idle[0]);
