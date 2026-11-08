@@ -17,9 +17,16 @@ export interface TestHooks {
   /** Per-entity screen position and visibility for this frame (input to invariants.checkTrace). */
   trace(): TraceFrame;
   state(): TraceState;
-  /** Added by the tunnel lane. */
-  dive?(): void;
+  /** Globe → tunnel; false when there is no origin to dive into yet. */
+  dive?(): boolean;
+  /** Tunnel → globe (also reverses a dive in progress). */
   surface?(): void;
+  /** Focus a hop in the current view (tunnel: glide along the spline to its gate). */
+  focusHop?(ttl: number): boolean;
+  /** "globe" | "diving" | "tunnel" | "surfacing". */
+  mode?(): string;
+  /** 0 = globe … 1 = tunnel. */
+  viewT?(): number;
 }
 
 export interface Projection {
