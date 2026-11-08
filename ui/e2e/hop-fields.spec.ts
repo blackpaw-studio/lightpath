@@ -1,9 +1,30 @@
 // Spec success criterion 2: every hop shows TTL, IP, RTTs, reverse DNS,
 // ASN/org and a location marked measured or estimated.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Hop } from "../src/protocol";
 import { FIXTURES, type Agent } from "./agents";
-import { openApp, startTrace, state, waitForDone } from "./harness";
+import { openApp, startTrace, waitForDone } from "./harness";
+
+type Event = { type: string; ttl?: number } & Record<string, unknown>;
+
+/**
+ * The hops a fixture's last trace ends with, folded straight from its events
+ * (hop sets a row, hop.update merges into it), independent of the app's reducer.
+ */
+const expectedHops = (file: string): Hop[] => {
+  const { events } = JSON.parse(readFileSync(join(import.meta.dirname, "fixtures", file), "utf8")) as { events: { event: Event }[] };
+  const evs = events.map((e) => e.event);
+  const start = evs.map((e) => e.type).lastIndexOf("trace.started");
+  const rows = new Map<number, Hop>();
+  for (const { type, ...fields } of evs.slice(start + 1)) {
+    const ttl = fields.ttl as number;
+    if (type === "hop") rows.set(ttl, fields as unknown as Hop);
+    if (type === "hop.update" && rows.has(ttl)) rows.set(ttl, { ...rows.get(ttl)!, ...fields });
+  }
+  return [...rows.values()].sort((a, b) => a.ttl - b.ttl);
+};
 
 const rtts = (h: Hop): string => h.probes.map((p) => (p.rttMs === null ? "*" : `${p.rttMs.toFixed(1)} ms`)).join(" · ");
 const meta = (h: Hop): string =>
@@ -17,7 +38,7 @@ for (const [name, agent] of CASES) {
     await openApp(page, agent);
     await startTrace(page);
     await waitForDone(page);
-    const { hops } = await state(page);
+    const hops = expectedHops(agent.file);
     expect(hops.length).toBeGreaterThan(0);
     const rows = page.locator(".hop");
     await expect(rows).toHaveCount(hops.length);
