@@ -56,3 +56,18 @@ describe("invalid coordinates", () => {
     expect(kinds.filter((k) => k === "invalid")).toHaveLength(2);
   });
 });
+
+describe("checkTrace camera cuts", () => {
+  const withCut = (fs: Frame[], at: number): Frame[] => fs.map((f, i) => (i === at ? { ...f, cut: true } : f));
+
+  it("exempts only the jump into a frame marked cut", () => {
+    expect(checkTrace(withCut(frames([0, 10, 400, 410]), 2), opts)).toEqual([]);
+    const v = checkTrace(withCut(frames([0, 10, 400, 900]), 2), opts);
+    expect(v).toEqual([expect.objectContaining({ kind: "jump", frame: 3 })]);
+  });
+
+  it("still reports flicker across a cut", () => {
+    const v = checkTrace(withCut(frames([0, null, 400]), 2), opts);
+    expect(v.map((x) => x.kind)).toEqual(["flicker"]);
+  });
+});

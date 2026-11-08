@@ -11,7 +11,8 @@
     "noUnusedParameters": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["src", "e2e", "*.ts"]
+  "include": ["src", "e2e", "scripts", "dev", "*.ts"]
 }

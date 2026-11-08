@@ -5,6 +5,8 @@ export interface EntityFrame {
 }
 export interface Frame {
   readonly tMs: number;
+  /** A deliberate camera cut landed on this frame: the jump from the previous frame is exempt (flicker is not). */
+  readonly cut?: boolean;
   /** Entities absent from a frame count as not visible. */
   readonly entities: Readonly<Record<string, EntityFrame>>;
 }
@@ -42,7 +44,7 @@ const checkEntity = (id: string, frames: readonly Frame[], opts: TraceOptions): 
     }
     if (last && prevVisible) {
       const d = Math.hypot(e.x - last.e.x, e.y - last.e.y);
-      if (d > opts.maxJumpPx) {
+      if (d > opts.maxJumpPx && f.cut !== true) {
         out.push({ kind: "jump", id, frame: i, detail: `${d.toFixed(1)}px > ${opts.maxJumpPx}px` });
       }
     } else if (last && f.tMs - last.tMs <= opts.flickerWindowMs) {
