@@ -1,4 +1,4 @@
-.PHONY: ui build test e2e
+.PHONY: ui build test e2e install-test snapshot
 
 GO_PKGS = $$(go list ./... | grep -v /node_modules/)
 
@@ -15,3 +15,11 @@ test:
 
 e2e: build
 	cd ui && npx playwright test
+
+install-test:
+	sh install_test.sh
+	shellcheck install_test.sh ui/public/install.sh
+
+# Local GoReleaser build, no publish: archives land in dist/.
+snapshot:
+	goreleaser release --snapshot --clean

@@ -36,6 +36,7 @@ const (
 
 // deps holds everything run touches outside the process, so tests can inject fakes.
 type deps struct {
+	stdout      io.Writer
 	stderr      io.Writer
 	listen      func(network, addr string) (net.Listener, error)
 	openBrowser func(url string) error
@@ -51,6 +52,7 @@ func defaultDeps() deps {
 		dist = nil // placeholder page
 	}
 	return deps{
+		stdout:      os.Stdout,
 		stderr:      os.Stderr,
 		listen:      net.Listen,
 		openBrowser: browser.Open,
@@ -62,10 +64,11 @@ func defaultDeps() deps {
 }
 
 type options struct {
-	port   int
-	replay string
-	record string
-	noOpen bool
+	port        int
+	replay      string
+	record      string
+	noOpen      bool
+	showVersion bool
 }
 
 func parseFlags(args []string, errOut io.Writer) (options, error) {
@@ -76,6 +79,7 @@ func parseFlags(args []string, errOut io.Writer) (options, error) {
 	fset.StringVar(&o.replay, "replay", "", "replay a recorded event stream instead of running traceroute")
 	fset.StringVar(&o.record, "record", "", "write each trace's event stream to this file")
 	fset.BoolVar(&o.noOpen, "no-open", false, "do not open a browser")
+	fset.BoolVar(&o.showVersion, "version", false, "print version and exit")
 	if err := fset.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -210,6 +214,10 @@ func run(ctx context.Context, args []string, d deps) error {
 		return nil
 	}
 	if err != nil {
+		return err
+	}
+	if o.showVersion {
+		_, err := fmt.Fprintf(d.stdout, "lightpath %s\n", version)
 		return err
 	}
 	appCtx, stopApp := context.WithCancel(ctx)

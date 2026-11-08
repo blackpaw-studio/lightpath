@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+project_name: lightpath
+
+before:
+  hooks:
+    - npm ci --prefix ui
+    - npm run build --prefix ui
+
+builds:
+  - id: lightpath
+    main: ./cmd/lightpath
+    binary: lightpath
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: lightpath
+    formats: [tar.gz]
+    # Versionless names so releases/latest/download/<name> stays stable (install.sh).
+    name_template: "lightpath_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true
