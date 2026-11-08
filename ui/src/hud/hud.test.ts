@@ -109,4 +109,41 @@ describe("hud", () => {
     hud.setFocus(2);
     expect(root.querySelector(".hop.focus")!.getAttribute("data-ttl")).toBe("2");
   });
+  it("shows no Cancel and no 'tracing' while running but disconnected", () => {
+    const { root, hud } = setup();
+    hud.render(running, { status: "disconnected", failures: 1 });
+    const btn = root.querySelector<HTMLButtonElement>("button.trace")!;
+    expect(btn.textContent).toBe("Trace");
+    expect(btn.disabled).toBe(true);
+    expect(root.querySelector(".summary")!.textContent).not.toContain("tracing");
+    expect(root.querySelector(".summary")!.textContent).toContain("disconnected");
+  });
+  it("disables Dive in the globe view with no hops, keeps Surface enabled", () => {
+    const { root, hud } = setup();
+    const btn = () => root.querySelector<HTMLButtonElement>("button.view")!;
+    hud.render(initialState, connected);
+    expect(btn().disabled).toBe(true);
+    hud.render(running, connected);
+    expect(btn().disabled).toBe(false);
+    hud.render(initialState, connected);
+    hud.setView("tunnel");
+    expect(btn().disabled).toBe(false);
+  });
+});
+describe("install hint", () => {
+  const hint = (ua: string) => {
+    const root = document.createElement("div");
+    mount(root, { onTrace() {}, onCancel() {}, onFocusHop() {}, onDive() {}, onSurface() {} }, { hosted: true, userAgent: ua });
+    return root.querySelector(".install .hint")!.textContent;
+  };
+  it.each([
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/120.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 FxiOS/120.0 Mobile/15E148 Safari/605.1.15",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 EdgiOS/120.0 Mobile/15E148 Safari/605.1.15",
+  ])("gives iOS non-Safari browsers the Safari hint", (ua) => {
+    expect(hint(ua)).toContain("Safari blocks");
+  });
+  it("keeps the LNA hint for desktop Chrome", () => {
+    expect(hint("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/120 Safari/537.36")).toContain("local network access");
+  });
 });

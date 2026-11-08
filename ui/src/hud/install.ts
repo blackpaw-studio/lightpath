@@ -34,6 +34,9 @@ const codeRow = (doc: Document, cmd: string, copyable: boolean): HTMLElement => 
 
 export const isSafari = (ua: string): boolean => /safari/i.test(ua) && !/chrome|chromium|android|crios|fxios|edg/i.test(ua);
 
+/** Any iOS browser is WebKit underneath, so it gets the Safari hint. */
+const needsSafariHint = (ua: string): boolean => isSafari(ua) || /iphone|ipad/i.test(ua);
+
 /** Static install panel; visibility is controlled by the HUD. */
 export const installPanel = (doc: Document, ua: string): HTMLElement => {
   const panel = el(doc, "section", "panel install");
@@ -46,7 +49,7 @@ export const installPanel = (doc: Document, ua: string): HTMLElement => {
     codeRow(doc, INSTALL_CMD, true),
     el(doc, "p", "step", "2 · Run"),
     codeRow(doc, "lightpath", false),
-    el(doc, "p", "hint", isSafari(ua) ? SAFARI_HINT : LNA_HINT),
+    el(doc, "p", "hint", needsSafariHint(ua) ? SAFARI_HINT : LNA_HINT),
     link,
   );
   return panel;

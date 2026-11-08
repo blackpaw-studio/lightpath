@@ -39,11 +39,12 @@ const make = <K extends keyof HTMLElementTagNameMap>(
   return e;
 };
 
-const summary = (s: TraceState): string => {
+const summary = (s: TraceState, connected: boolean): string => {
   if (s.status === "idle" || s.target === null) return "Enter a host to trace the route from here.";
   const ip = s.resolvedIp ? " (" + s.resolvedIp + ")" : "";
+  const runningTail = connected ? " · tracing…" : " · disconnected: trace interrupted";
   const tail =
-    s.status === "done" ? (s.reached ? " · reached" : " · not reached") : s.status === "running" ? " · tracing…" : "";
+    s.status === "done" ? (s.reached ? " · reached" : " · not reached") : s.status === "running" ? runningTail : "";
   return s.target + ip + tail;
 };
 
@@ -88,11 +89,13 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
   let running = false;
   let connected = false;
   let focus: number | null = null;
+  let hopCount = 0;
 
   const syncButtons = (): void => {
     traceBtn.textContent = running ? "Cancel" : "Trace";
     traceBtn.disabled = !running && !connected;
     viewBtn.textContent = view === "globe" ? "Dive" : "Surface";
+    viewBtn.disabled = view === "globe" && hopCount === 0;
   };
   const applyFocus = (): void =>
     list
@@ -114,11 +117,12 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
 
   return {
     render(state, conn) {
-      running = state.status === "running";
       connected = conn.status === "connected";
+      running = state.status === "running" && connected;
+      hopCount = state.hops.length;
       chip.textContent = conn.status;
       chip.className = "chip " + conn.status;
-      status.textContent = summary(state);
+      status.textContent = summary(state, connected);
       error.hidden = state.error === null;
       error.textContent = state.error?.message ?? "";
       install.hidden = !(opts.hosted && conn.status !== "connected" && conn.failures > 0);
