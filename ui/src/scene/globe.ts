@@ -9,7 +9,7 @@ import { projectFrame, type TraceFrame } from "../testhooks";
 import { createApertureUniforms, createGlobeShell } from "./atmosphere";
 import { createBackdrop } from "./backdrop";
 import { createBloom, type Bloom, type BloomLook } from "./bloom";
-import { createCameraRig, type CameraRig } from "./camera";
+import { applyFraming, createCameraRig, type CameraRig } from "./camera";
 import type { BloomTier } from "./frameBudget";
 import { createGlobePoseSource, ORIGIN_KEY, rotateY, type PoseMap, type PoseSource } from "./globePoses";
 import { createArcs, type ArcInfo } from "./arcs";
@@ -124,6 +124,8 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
 
   let size = { w: opts.width, h: opts.height };
   let state: TraceState = initialState;
+  /** Last real origin (globe-local); anchors a new trace whose origin has no geo yet. */
+  let knownOrigin: Vec3 | null = null;
   let layout = globeLayout(state);
   let infos = nodeInfos(state, layout);
   let arcList = arcInfos(layout);
@@ -134,6 +136,8 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
   let lastFraming = "";
   let fadeStart: number | null = null;
   let rotationPaused = false;
+  /** A reduced-motion camera cut happened during the latest update. */
+  let cutThisFrame = false;
 
   const pixelWorld = (): number => {
     const cam = rig.camera;
@@ -156,8 +160,10 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     lastFraming = key;
     if (!layout.origin) return;
     const pts: Vec3[] = [layout.origin, ...layout.hops.map((h) => h.pos)].map((p) => rotateY(p, rotation));
-    rig.frame(pts, opts.reducedMotion);
-    if (opts.reducedMotion) fadeStart = now;
+    if (applyFraming(rig, pts, opts.reducedMotion)) {
+      cutThisFrame = true;
+      fadeStart = now;
+    }
   };
 
   const project = (p: Vec3): { x: number; y: number; inFrustum: boolean } => {
@@ -176,12 +182,14 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     setState: (s) => {
       if (s === state) return;
       state = s;
-      layout = globeLayout(s);
+      layout = globeLayout(s, knownOrigin);
+      knownOrigin = layout.origin ?? knownOrigin;
       infos = nodeInfos(s, layout);
       arcList = arcInfos(layout);
     },
     update: (dtMs, nowMs) => {
       now = nowMs;
+      cutThisFrame = false;
       if (state.status !== "running" && !opts.reducedMotion && !rotationPaused) rotation += (IDLE_ROTATION * dtMs) / 1000;
       poses = poseSource({ layout, nowMs, dtMs, reducedMotion: opts.reducedMotion, rotationY: rotation });
       reframe();
@@ -191,8 +199,8 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
       shell.surface.rotation.y = rotation;
       dots.update(nowMs);
       dots.setPixelWorld(pixelWorld());
-      nodes.update(poses, infos, nowMs, opts.reducedMotion);
-      arcs.update(poses, arcList, nowMs, opts.reducedMotion);
+      nodes.update(poses, infos, nowMs, opts.reducedMotion, layout.generation);
+      arcs.update(poses, arcList, nowMs, opts.reducedMotion, layout.generation);
       bloom.sample(dtMs);
       if (fadeStart !== null) {
         const k = Math.min((nowMs - fadeStart) / REDUCED_FADE_MS, 1);
@@ -212,7 +220,7 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
       bloom.setSize(w, h);
     },
     poses: () => poses,
-    trace: () => projectFrame(now, poses, project),
+    trace: () => ({ ...projectFrame(now, poses, project), ...(cutThisFrame ? { cut: true } : {}) }),
     setPoseSource: (s) => { poseSource = s; },
     setGlobeOpacity: (o) => {
       shell.setOpacity(o);

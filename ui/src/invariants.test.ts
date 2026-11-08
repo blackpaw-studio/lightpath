@@ -92,25 +92,21 @@ describe("world-space jumps (maxJumpWorld)", () => {
   });
 });
 
-describe("camera cuts", () => {
-  const cutTrace = (cutAt: number | null): Frame[] =>
-    [0, 10, 500, 510].map((x, i) => ({
-      tMs: i * 16, cut: i === cutAt, entities: { n: { x, y: 0, visible: true, world: [1, 0, 0] } },
-    }));
+describe("checkTrace camera cuts", () => {
+  const withCut = (fs: Frame[], at: number): Frame[] => fs.map((f, i) => (i === at ? { ...f, cut: true } : f));
 
-  it("a declared cut excuses the screen jump on that frame only", () => {
-    expect(checkTrace(cutTrace(2), { ...opts, maxJumpWorld: 0.1 })).toEqual([]);
-    expect(checkTrace(cutTrace(1), { ...opts, maxJumpWorld: 0.1 }).map((v) => v.kind)).toEqual(["jump"]);
+  it("exempts only the jump into a frame marked cut", () => {
+    expect(checkTrace(withCut(frames([0, 10, 400, 410]), 2), opts)).toEqual([]);
+    const v = checkTrace(withCut(frames([0, 10, 400, 900]), 2), opts);
+    expect(v).toEqual([expect.objectContaining({ kind: "jump", frame: 3 })]);
   });
-  it("a cut restarts flicker tracking: visibility before it was seen by another camera", () => {
-    const vis = [true, true, false, true];
-    const fs: Frame[] = vis.map((visible, i) => ({
-      tMs: i * 16, cut: i === 2, entities: { n: { x: 0, y: 0, visible, world: [1, 0, 0] } },
-    }));
-    expect(checkTrace(fs, opts)).toEqual([]);
-    expect(checkTrace(fs.map((f) => ({ ...f, cut: false })), opts).map((v) => v.kind)).toEqual(["flicker"]);
+
+  it("still reports flicker across a cut", () => {
+    const v = checkTrace(withCut(frames([0, null, 400]), 2), opts);
+    expect(v.map((x) => x.kind)).toEqual(["flicker"]);
   });
-  it("a cut never excuses a world-space teleport", () => {
+
+  it("never excuses a world-space teleport", () => {
     const fs: Frame[] = [0, 1].map((i) => ({
       tMs: i * 16, cut: i === 1, entities: { n: { x: i * 400, y: 0, visible: true, world: [i * 3, 0, 0] } },
     }));

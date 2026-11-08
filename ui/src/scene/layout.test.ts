@@ -35,15 +35,32 @@ describe("globeLayout", () => {
     expect(l.hops[0]!.pos).toEqual(l.origin);
   });
 
-  it("falls back to the first located hop, then (0,0), when the origin has no geo", () => {
+  it("falls back to the first located hop when the origin has no geo", () => {
     const noGeo = { ...origin, lat: null, lon: null };
     expect(globeLayout(state([hop(1, { lat: 5, lon: 6, geoSource: "api" })], noGeo)).origin).toEqual(latLonToVec3(5, 6));
-    expect(globeLayout(state([hop(1)], null)).origin).toEqual(latLonToVec3(0, 0));
   });
 
   it("has no origin (nothing to draw) before any trace", () => {
-    expect(globeLayout(initialState)).toEqual({ origin: null, hops: [] });
+    expect(globeLayout(initialState)).toEqual({ generation: 0, origin: null, hops: [] });
     expect(globeLayout(state([], { ...origin, lat: null, lon: null })).origin).toBeNull();
+  });
+
+  it("carries the trace generation", () => {
+    expect(globeLayout({ ...state([]), generation: 7 }).generation).toBe(7);
+  });
+
+  it("never fabricates (0,0): without any anchor, unlocated hops are left out", () => {
+    const l = globeLayout(state([hop(1), hop(2)], { ...origin, lat: null, lon: null }));
+    expect(l).toEqual({ generation: 0, origin: null, hops: [] });
+  });
+
+  it("falls back to a previously known origin until a real anchor exists", () => {
+    const prev = latLonToVec3(40, -74);
+    const l = globeLayout(state([hop(1)], { ...origin, lat: null, lon: null }), prev);
+    expect(l.origin).toEqual(prev);
+    expect(l.hops[0]!.pos).toEqual(prev);
+    const anchored = globeLayout(state([hop(1, { lat: 5, lon: 6, geoSource: "api" })], { ...origin, lat: null, lon: null }), prev);
+    expect(anchored.origin).toEqual(latLonToVec3(5, 6));
   });
 
   it("colours by mean RTT and flags timeout-only hops", () => {

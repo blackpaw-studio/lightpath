@@ -75,6 +75,7 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
   let prevPose: CameraPose | null = null;
   let anchored: unknown = null;
   let now = 0;
+  let generation = 0;
 
   const place = (c: CameraPose): void => {
     camera.position.set(...c.pos);
@@ -97,6 +98,7 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
   return {
     globe,
     setState: (s) => {
+      generation = s.generation;
       globe.setState(s);
       ctl.setState(s);
       tunnel.setGates(ctl.gates());
@@ -123,6 +125,7 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
       tunnel.update(nowMs, f.tunnel, opts.reducedMotion);
       gates.update({
         poses: ctl.poses(), gates: ctl.gates(), depths: ctl.depths(), frame, cameraPos: pose.pos,
+        generation,
         ringFade: f.gates, labelFade: f.labels, nowMs, reducedMotion: opts.reducedMotion, aspect: size.w / size.h,
       });
     },
@@ -159,7 +162,14 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
     mode: () => ctl.mode(),
     viewT: () => ctl.viewT(),
     poses: () => ctl.poses(),
-    trace: () => ({ ...globe.trace(), cut: ctl.cut() }),
+    // One cut flag per frame: the tunnel transition's shot change, or the globe
+    // rig's reduced-motion cut while the rig is the camera on screen (in the
+    // other modes the controller's camera overrides it, so no cut is seen).
+    trace: () => {
+      const t = globe.trace();
+      const rigCut = t.cut === true && ctl.mode() === "globe";
+      return rigCut || ctl.cut() ? { ...t, cut: true } : { ...t, cut: false };
+    },
     dispose: () => {
       gates.dispose();
       tunnel.dispose();

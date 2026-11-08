@@ -30,12 +30,21 @@ export interface PoseInput {
 }
 
 export interface GlobePoseState {
+  readonly generation: number;
   /** Smoothed globe-local unit positions. */
   readonly local: ReadonlyMap<number, Vec3>;
   readonly bornAt: ReadonlyMap<number, number>;
 }
 
-export const emptyPoseState: GlobePoseState = { local: new Map(), bornAt: new Map() };
+export const emptyPoseState: GlobePoseState = { generation: 0, local: new Map(), bornAt: new Map() };
+
+/** A new trace keeps only the origin (the user's own location) and restarts every hop. */
+const forGeneration = (s: GlobePoseState, generation: number): GlobePoseState => {
+  if (s.generation === generation) return s;
+  const keep = <V>(m: ReadonlyMap<number, V>): Map<number, V> =>
+    new Map([...m].filter(([k]) => k === ORIGIN_KEY));
+  return { generation, local: keep(s.local), bornAt: keep(s.bornAt) };
+};
 
 const BACK_C1 = 1.70158;
 const easeOutBack = (t: number): number => 1 + (BACK_C1 + 1) * (t - 1) ** 3 + BACK_C1 * (t - 1) ** 2;
@@ -57,34 +66,56 @@ export const rotateY = ([x, y, z]: Vec3, a: number): Vec3 => {
 const glide = (from: Vec3, to: Vec3, dtMs: number): Vec3 =>
   slerpGreatCircle(from, to, 1 - Math.exp(-Math.max(dtMs, 0) / GLIDE_TAU_MS));
 
-/** Pure: advance smoothed positions one frame and produce this frame's poses. */
-export const stepGlobePoses = (prev: GlobePoseState, input: PoseInput): { state: GlobePoseState; poses: PoseMap } => {
-  const { origin, hops } = input.layout;
-  const targets: [number, Vec3][] = [
-    ...(origin ? [[ORIGIN_KEY, origin] as [number, Vec3]] : []),
-    ...hops.map((h): [number, Vec3] => [h.ttl, h.pos]),
-  ];
-  const local = new Map(targets.map(([k, target]) => {
+interface PoseBuffers {
+  readonly local: Map<number, Vec3>;
+  readonly bornAt: Map<number, number>;
+  readonly poses: Map<number, Pose>;
+}
+
+const newBuffers = (): PoseBuffers => ({ local: new Map(), bornAt: new Map(), poses: new Map() });
+
+/** Core step: clears `out` and fills it from `prevState`. `out` must not alias `prevState`'s maps. */
+const stepInto = (prevState: GlobePoseState, input: PoseInput, out: PoseBuffers): GlobePoseState => {
+  const prev = forGeneration(prevState, input.layout.generation);
+  // Until a real anchor exists the origin stays where it was rather than vanishing.
+  const origin = input.layout.origin ?? prev.local.get(ORIGIN_KEY) ?? null;
+  out.local.clear();
+  out.bornAt.clear();
+  out.poses.clear();
+  const place = (k: number, target: Vec3): void => {
     const p = prev.local.get(k);
-    return [k, p ? glide(p, target, input.dtMs) : target] as const;
-  }));
-  const bornAt = new Map(targets.map(([k]) => [k, prev.bornAt.get(k) ?? input.nowMs] as const));
-  const poses = new Map([...local].map(([k, pos]) => {
-    const look = appearance(input.nowMs - bornAt.get(k)!, input.reducedMotion);
-    return [k, { pos: rotateY(pos, input.rotationY), ...look }] as const;
-  }));
-  return { state: { local, bornAt }, poses };
+    const pos = p ? glide(p, target, input.dtMs) : target;
+    const born = prev.bornAt.get(k) ?? input.nowMs;
+    out.local.set(k, pos);
+    out.bornAt.set(k, born);
+    out.poses.set(k, { pos: rotateY(pos, input.rotationY), ...appearance(input.nowMs - born, input.reducedMotion) });
+  };
+  if (origin) place(ORIGIN_KEY, origin);
+  for (const h of input.layout.hops) place(h.ttl, h.pos);
+  return { generation: prev.generation, local: out.local, bornAt: out.bornAt };
+};
+
+/** Pure: advance smoothed positions one frame and produce this frame's poses. */
+export const stepGlobePoses = (prevState: GlobePoseState, input: PoseInput): { state: GlobePoseState; poses: PoseMap } => {
+  const out = newBuffers();
+  return { state: stepInto(prevState, input, out), poses: out.poses };
 };
 
 /** Per-frame pose producer. The tunnel lane composes over this one. */
 export type PoseSource = (input: PoseInput) => PoseMap;
 
-/** Stateful wrapper over stepGlobePoses; call exactly once per frame. */
+/**
+ * Stateful wrapper over the same step; call exactly once per frame. Maps are
+ * double-buffered: the previous frame's PoseMap stays valid for one more
+ * frame, then its storage is reused.
+ */
 export const createGlobePoseSource = (): PoseSource => {
+  const buffers = [newBuffers(), newBuffers()] as const;
   let state = emptyPoseState;
+  let frame = 0;
   return (input) => {
-    const r = stepGlobePoses(state, input);
-    state = r.state;
-    return r.poses;
+    const out = buffers[frame++ % 2]!;
+    state = stepInto(state, input, out);
+    return out.poses;
   };
 };

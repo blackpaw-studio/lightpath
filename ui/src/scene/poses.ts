@@ -48,12 +48,22 @@ export interface TunnelPoseSource {
   depths(): ReadonlyMap<number, number>;
 }
 
+/**
+ * Holds no PoseMap across frames: the globe source double-buffers and reuses
+ * its Maps, so the result is valid only until the next call. Gate depths are
+ * this source's own state and restart with each trace generation.
+ */
 export const createTunnelPoseSource = (globe: PoseSource, view: () => TunnelPoseView): TunnelPoseSource => {
   let depths: ReadonlyMap<number, number> = new Map();
+  let generation: number | null = null;
   return {
     source: (input: PoseInput) => {
       const poses = globe(input);
       const v = view();
+      if (input.layout.generation !== generation) {
+        generation = input.layout.generation;
+        depths = new Map();
+      }
       depths = stepGateDepths(depths, v.gates, input.dtMs);
       const frame = v.frame;
       if (!frame) return poses;

@@ -108,7 +108,10 @@ describe.each([[1280, 720], [375, 812]])("dive and surface at %ix%i", (w, h) => 
     const sim = createSim(w, h, true);
     const frames = sim.run(200);
     sim.ctl.dive();
-    frames.push(...sim.run(DIVE_MS + 300));
+    // Dwell past the flicker window: the cut into the tunnel hides the mouth
+    // behind the camera, and surfacing cuts back to a shot that shows it, so a
+    // user reversing within the window does (correctly) see it re-appear.
+    frames.push(...sim.run(DIVE_MS + FLICKER_WINDOW_MS + 300));
     const inTunnel = frames.length - 1;
     expect(sim.ctl.mode()).toBe("tunnel");
     sim.ctl.surface();

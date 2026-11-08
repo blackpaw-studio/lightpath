@@ -19,6 +19,14 @@ describe("reduce", () => {
     const s = reduce(run(started, hop(1), { type: "trace.done", reached: true }), { ...started, target: "b.com" });
     expect(s).toMatchObject({ status: "running", target: "b.com", origin, hops: [], reached: null, error: null });
   });
+  it("trace.started bumps the trace generation, even for the same target", () => {
+    const first = run(started, hop(1));
+    const second = reduce(first, started);
+    expect(initialState.generation).toBe(0);
+    expect(first.generation).toBe(1);
+    expect(second.generation).toBe(2);
+    expect(reduce(second, hop(1)).generation).toBe(2);
+  });
   it("inserts hops sorted by ttl, replacing duplicates", () => {
     const s = run(started, hop(3), hop(1), hop(2), hop(2, { ip: "new" }));
     expect(s.hops.map((h) => h.ttl)).toEqual([1, 2, 3]);

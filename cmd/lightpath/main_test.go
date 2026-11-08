@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,8 +57,8 @@ func testDeps(errOut io.Writer) (deps, *recorder) {
 		openBrowser: rec.open,
 		clock:       instantClock{},
 		static:      fstest.MapFS{"index.html": {Data: []byte("<h1>ui</h1>")}},
-		live: func() (server.TraceSource, server.Validator, error) {
-			return nil, nil, errLiveNotWired
+		live: func(context.Context) (server.TraceSource, server.Validator, error) {
+			return nil, nil, errors.New("live mode not under test")
 		},
 		writeFile: func(string, []byte) error { return nil },
 	}, rec
@@ -95,7 +97,7 @@ func TestStartServesReplayOnLoopbackOnly(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- a.serve(ctx) }()
+	go func() { done <- a.serve(ctx, cancel) }()
 
 	resp, err := http.Get("http://" + addr.String() + "/")
 	if err != nil {
@@ -150,11 +152,35 @@ func TestBrowserOpenFailureIsNotFatal(t *testing.T) {
 	}
 }
 
-func TestLiveModeReportsNotWired(t *testing.T) {
+func TestLiveModeBuildsSourceWithAppContext(t *testing.T) {
 	d, _ := testDeps(io.Discard)
-	_, err := start(context.Background(), options{noOpen: true}, d)
-	if !errors.Is(err, errLiveNotWired) || !strings.Contains(err.Error(), "not wired yet") {
-		t.Fatalf("got %v", err)
+	got := make(chan context.Context, 1)
+	d.live = func(ctx context.Context) (server.TraceSource, server.Validator, error) {
+		got <- ctx
+		return traceFunc(func(context.Context, string, func(protocol.ServerMsg)) error { return nil }),
+			func(string) error { return nil }, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- run(ctx, []string{"--no-open", "--port", "0"}, d) }()
+	liveCtx := <-got
+	if liveCtx.Err() != nil {
+		t.Fatal("live context must stay open while the agent runs")
+	}
+	cancel()
+	if err := <-runDone; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if liveCtx.Err() == nil {
+		t.Error("live context must end when the agent stops")
+	}
+}
+
+func TestLiveModeErrorFailsBeforeListening(t *testing.T) {
+	d, _ := testDeps(io.Discard)
+	d.listen = func(string, string) (net.Listener, error) { t.Fatal("must not listen"); return nil, nil }
+	if _, err := start(context.Background(), options{noOpen: true}, d); err == nil {
+		t.Fatal("expected the live builder's error")
 	}
 }
 
@@ -212,7 +238,7 @@ func TestReplayStreamsOverWebSocketAndRecords(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	defer cancel()
-	go a.serve(ctx)
+	go a.serve(ctx, cancel)
 	port := a.ln.Addr().(*net.TCPAddr).Port
 
 	hdr := http.Header{}
@@ -284,7 +310,7 @@ func TestShutdownCancelsActiveTraceAndWaitsForIt(t *testing.T) {
 		close(sawCancel)
 		return ctx.Err()
 	})
-	d.live = func() (server.TraceSource, server.Validator, error) {
+	d.live = func(context.Context) (server.TraceSource, server.Validator, error) {
 		return src, func(string) error { return nil }, nil
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -332,4 +358,132 @@ type traceFunc func(ctx context.Context, target string, emit func(protocol.Serve
 
 func (f traceFunc) Trace(ctx context.Context, target string, emit func(protocol.ServerMsg)) error {
 	return f(ctx, target, emit)
+}
+
+// If the listener dies under Serve, run must still cancel every session and
+// wait for its trace before returning.
+func TestServeErrorStillStopsAndWaitsForTraces(t *testing.T) {
+	d, _ := testDeps(io.Discard)
+	started := make(chan struct{})
+	returned := make(chan struct{})
+	src := traceFunc(func(ctx context.Context, target string, emit func(protocol.ServerMsg)) error {
+		defer close(returned)
+		emit(protocol.TraceStarted{Target: target})
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	d.live = func(context.Context) (server.TraceSource, server.Validator, error) {
+		return src, func(string) error { return nil }, nil
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.listen = func(string, string) (net.Listener, error) { return ln, nil }
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	runDone := make(chan error, 1)
+	go func() { runDone <- run(ctx, []string{"--no-open"}, d) }()
+
+	hdr := http.Header{}
+	hdr.Set("Origin", "http://127.0.0.1:"+strconv.Itoa(port))
+	c, _, err := websocket.Dial(ctx, "ws://127.0.0.1:"+strconv.Itoa(port)+"/ws", &websocket.DialOptions{HTTPHeader: hdr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"type":"trace.start","target":"example.com"}`)); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	ln.Close() // Serve fails with a non-ErrServerClosed error
+
+	select {
+	case err := <-runDone:
+		if err == nil {
+			t.Error("run should report the Serve error")
+		}
+	case <-ctx.Done():
+		t.Fatal("run did not return")
+	}
+	select {
+	case <-returned:
+	default:
+		t.Fatal("run returned before the trace source returned")
+	}
+}
+
+// Smoke test from the plan: `lightpath --replay <fixture> --no-open` driven by
+// a scripted ws client streams the fixture's events in order.
+func TestReplaySmokeE2EFixtures(t *testing.T) {
+	paths, err := filepath.Glob("../../ui/e2e/fixtures/*.json")
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("no e2e fixtures: %v", err)
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			fx, err := replay.LoadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d, _ := testDeps(io.Discard)
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			d.listen = func(string, string) (net.Listener, error) { return ln, nil }
+			port := ln.Addr().(*net.TCPAddr).Port
+
+			ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+			defer cancel()
+			appCtx, stop := context.WithCancel(ctx)
+			runDone := make(chan error, 1)
+			go func() { runDone <- run(appCtx, []string{"--replay", path, "--no-open"}, d) }()
+
+			hdr := http.Header{}
+			hdr.Set("Origin", "http://127.0.0.1:"+strconv.Itoa(port))
+			c, _, err := websocket.Dial(ctx, "ws://127.0.0.1:"+strconv.Itoa(port)+"/ws", &websocket.DialOptions{HTTPHeader: hdr})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.CloseNow()
+			if err := c.Write(ctx, websocket.MessageText, []byte(`{"type":"trace.start","target":"anything.example"}`)); err != nil {
+				t.Fatal(err)
+			}
+			for i, want := range fx.Events {
+				_, data, err := c.Read(ctx)
+				if err != nil {
+					t.Fatalf("event %d: %v", i, err)
+				}
+				got, err := protocol.DecodeServer(data)
+				if err != nil {
+					t.Fatalf("event %d invalid: %v", i, err)
+				}
+				gotJSON, _ := json.Marshal(got)
+				wantJSON, _ := json.Marshal(want.Msg)
+				if string(gotJSON) != string(wantJSON) {
+					t.Fatalf("event %d:\n got %s\nwant %s", i, gotJSON, wantJSON)
+				}
+			}
+			stop()
+			if err := <-runDone; err != nil {
+				t.Fatalf("run: %v", err)
+			}
+		})
+	}
+}
+
+func TestVersionFlagPrintsVersionAndExitsWithoutListening(t *testing.T) {
+	var out, errOut bytes.Buffer
+	d, _ := testDeps(&errOut)
+	d.stdout = &out
+	if err := run(context.Background(), []string{"--version"}, d); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "lightpath "+version+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
 }

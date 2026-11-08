@@ -1,0 +1,10 @@
+# Cloudflare Pages config for lightpath.blackpaw.studio.
+# DOCUMENTATION ONLY until the ship gate: nothing has been deployed from this file.
+#
+# Deploy (after approval; builds ui/dist first with `make ui`):
+#   wrangler pages deploy ui/dist --project-name lightpath
+# Then add the custom domain lightpath.blackpaw.studio to the Pages project
+# (CNAME to lightpath.pages.dev) in the Cloudflare dashboard/DNS.
+name = "lightpath"
+pages_build_output_dir = "ui/dist"
+compatibility_date = "2026-11-07"

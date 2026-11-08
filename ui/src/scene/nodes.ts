@@ -1,6 +1,6 @@
 import {
   AdditiveBlending, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, Quaternion, RingGeometry, Sprite, SpriteMaterial,
-  Vector3, type Object3D,
+  Vector3, type Object3D, type Texture,
 } from "three";
 import type { Pose, PoseMap } from "./globePoses";
 import { glowTexture } from "./glow";
@@ -15,8 +15,11 @@ export interface NodeInfo {
 }
 
 export interface Nodes {
-  /** Positions/scale/opacity come only from `poses`; `info` supplies look. */
-  update(poses: PoseMap, info: ReadonlyMap<number, NodeInfo>, nowMs: number, reducedMotion: boolean): void;
+  /**
+   * Positions/scale/opacity come only from `poses`; `info` supplies look. A new
+   * trace `generation` recreates hop entries (the origin persists).
+   */
+  update(poses: PoseMap, info: ReadonlyMap<number, NodeInfo>, nowMs: number, reducedMotion: boolean, generation: number): void;
   dispose(): void;
 }
 
@@ -39,9 +42,9 @@ const shimmer = (t: number, seed: number): number =>
 
 const ringGeometry = new RingGeometry(0.88, 1, 64);
 
-const makeEntry = (key: number, nowMs: number): Entry => {
+const makeEntry = (key: number, nowMs: number, texture: Texture): Entry => {
   const glow = new Sprite(new SpriteMaterial({
-    map: glowTexture(), blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
+    map: texture, blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
   }));
   const ring = new Mesh(ringGeometry, new MeshBasicMaterial({
     blending: AdditiveBlending, depthWrite: false, transparent: true, side: DoubleSide, toneMapped: false,
@@ -57,8 +60,11 @@ const disposeEntry = (e: Entry): void => {
   (e.ring.material as MeshBasicMaterial).dispose();
 };
 
-export const createNodes = (parent: Object3D): Nodes => {
-  const entries = new Map<number, Entry>();
+/** Entry key: hops are scoped to their trace generation; the origin is not. */
+const entryKey = (ttl: number, generation: number): string => (ttl === 0 ? "origin" : `${generation}:${ttl}`);
+
+export const createNodes = (parent: Object3D, texture: () => Texture = glowTexture): Nodes => {
+  const entries = new Map<string, Entry>();
   const tmpColor = new Color();
   const normal = new Vector3();
   const q = new Quaternion();
@@ -111,21 +117,23 @@ export const createNodes = (parent: Object3D): Nodes => {
   };
 
   return {
-    update: (poses, info, nowMs, reducedMotion) => {
+    update: (poses, info, nowMs, reducedMotion, generation) => {
+      const wanted = new Set([...poses.keys()].map((k) => entryKey(k, generation)));
       for (const [k, e] of entries) {
-        if (!poses.has(k)) {
+        if (!wanted.has(k)) {
           parent.remove(e.group);
           disposeEntry(e);
           entries.delete(k);
         }
       }
-      for (const [k, pose] of poses) {
-        const look = info.get(k);
+      for (const [ttl, pose] of poses) {
+        const look = info.get(ttl);
         if (!look) continue;
-        let e = entries.get(k);
+        const key = entryKey(ttl, generation);
+        let e = entries.get(key);
         if (!e) {
-          e = makeEntry(k, nowMs);
-          entries.set(k, e);
+          e = makeEntry(ttl, nowMs, texture());
+          entries.set(key, e);
           parent.add(e.group);
         }
         updateEntry(e, pose, look, nowMs, reducedMotion);

@@ -243,32 +243,93 @@ func TestIPAPI429BlocksThenRetries(t *testing.T) {
 	}
 }
 
-func TestIPAPIDropsIPsWhoseCallersAllGaveUp(t *testing.T) {
+// A trace's hops arrive ~300 ms apart; the batch window must merge them so
+// one 15-hop trace costs only a few of the 15 requests per minute.
+func TestIPAPIFifteenHopTraceUsesAtMostThreeRequests(t *testing.T) {
 	h := newFakeHTTP(okBatchHandler(nil))
 	clk := newFakeClock()
 	a := newTestIPAPI(t, h, clk)
+	const hops, spacing = 15, 300 * time.Millisecond
 
-	ctx, cancel := context.WithCancel(t.Context())
+	calls := make([]*call, hops)
+	var windowEnd time.Duration // fake time since start; 0 = no window open
+	now := time.Duration(0)
+	advance := func(d time.Duration) {
+		clk.Advance(d)
+		now += d
+		if windowEnd != 0 && now >= windowEnd {
+			h.next(t) // the window closed: wait for its request
+			windowEnd = 0
+		}
+	}
+	for i := range calls {
+		calls[i] = a.enqueue(addrN(i + 1))
+		if windowEnd == 0 {
+			clk.Await(t, batchWindow) // this hop opened a window
+			windowEnd = now + batchWindow
+		}
+		advance(spacing)
+	}
+	for windowEnd != 0 {
+		advance(spacing)
+	}
+	for i, c := range calls {
+		<-c.done
+		if !c.ok {
+			t.Fatalf("hop %d has no geo", i+1)
+		}
+	}
+	t.Logf("requests for a %d-hop trace: %d", hops, h.count())
+	if h.count() > 3 {
+		t.Errorf("requests = %d, want ≤ 3", h.count())
+	}
+	if batchWindow+250*time.Millisecond >= DefaultTimeout {
+		t.Errorf("batch window %v leaves too little of the %v lookup timeout", batchWindow, DefaultTimeout)
+	}
+}
+
+// A lookup that gives up during an X-Rl block must not lose the IP: it is
+// fetched once the block clears, so the next trace's lookup is a cache hit.
+func TestIPAPIFetchesAbandonedIPsAfterABlock(t *testing.T) {
+	var n atomic.Int32
+	h := newFakeHTTP(func(r recordedReq) (*http.Response, error) {
+		hdr := map[string]string{"X-Rl": "10", "X-Ttl": "60"}
+		if n.Add(1) == 1 {
+			hdr = map[string]string{"X-Rl": "0", "X-Ttl": "30"}
+		}
+		return okBatchHandler(hdr)(r)
+	})
+	clk := newFakeClock()
+	a := newTestIPAPI(t, h, clk)
+
+	first := a.enqueue(netip.MustParseAddr("8.8.8.8"))
+	clk.Await(t, batchWindow)
+	clk.Advance(batchWindow)
+	<-first.done // quota exhausted for 30 s
+	h.next(t)
+
 	done := make(chan bool, 1)
 	go func() {
-		_, ok := a.Lookup(ctx, netip.MustParseAddr("8.8.8.8"))
+		_, ok := a.Lookup(t.Context(), netip.MustParseAddr("1.1.1.1"))
 		done <- ok
 	}()
-	clk.Await(t, batchWindow) // queued, batch not yet sent
-	clk.Await(t, DefaultTimeout)
-	cancel() // stands in for the caller's deadline
-	if ok := <-done; ok {
-		t.Fatal("lookup must return empty when the caller gives up")
-	}
-	// A live lookup joins the same window; the abandoned IP is not sent.
-	live := a.enqueue(netip.MustParseAddr("1.1.1.1"))
+	clk.Await(t, batchWindow)
 	clk.Advance(batchWindow)
-	req := h.next(t)
-	<-live.done
-	var ips []string
-	_ = json.Unmarshal([]byte(req.Body), &ips)
-	if len(ips) != 1 || ips[0] != "1.1.1.1" {
-		t.Errorf("batch = %v, want only the live IP", ips)
+	clk.Await(t, 30*time.Second-batchWindow) // sender waits out the block
+	clk.Advance(DefaultTimeout)
+	if <-done {
+		t.Fatal("lookup should give up while the block lasts")
+	}
+	clk.Advance(30 * time.Second)
+	if got := batchIPs(t, h.next(t)); len(got) != 1 || got[0] != "1.1.1.1" {
+		t.Fatalf("batch after block = %v, want the abandoned IP", got)
+	}
+	geo, ok := a.Lookup(t.Context(), netip.MustParseAddr("1.1.1.1"))
+	if !ok || geo.City != "Chicago" {
+		t.Errorf("next lookup = %+v ok=%v, want the cached result", geo, ok)
+	}
+	if h.count() != 2 {
+		t.Errorf("requests = %d, want 2 (second lookup served from cache)", h.count())
 	}
 }
 

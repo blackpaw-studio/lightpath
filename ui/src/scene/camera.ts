@@ -62,14 +62,29 @@ export const clampLatitude = (dir: Vec3, maxDeg: number): Vec3 => {
   return latLonToVec3(Math.sign(lat) * maxDeg, lon);
 };
 
+/** Narrower half-FOV (radians) shrunk by the fit margin. */
+const fitHalfAngle = (aspect: number, fovDeg: number): number => {
+  const vHalf = (fovDeg * Math.PI) / 360;
+  return Math.min(vHalf, Math.atan(Math.tan(vHalf) * aspect)) * FIT_MARGIN;
+};
+
+/** True when unit-sphere point `p` faces a camera at `camPos` (looking at the centre) and sits inside the fit margin. */
+export const inView = (camPos: readonly number[], p: Vec3, aspect: number, fovDeg: number): boolean => {
+  const [cx = 0, cy = 0, cz = 0] = camPos;
+  const d = Math.hypot(cx, cy, cz);
+  if ((p[0] * cx + p[1] * cy + p[2] * cz) / d <= 1 / d) return false; // behind the horizon
+  const rel: Vec3 = [p[0] - cx, p[1] - cy, p[2] - cz];
+  const axis: Vec3 = [-cx, -cy, -cz];
+  return angularDistance(rel, axis) <= fitHalfAngle(aspect, fovDeg) + 1e-9;
+};
+
 /**
  * Camera distance from the globe centre so unit-sphere points at the given
  * angles off the camera axis project inside the narrower half-FOV. Points
  * past the limb (> 90°) count as the limb.
  */
 export const fitDistance = (angles: readonly number[], aspect: number, fovDeg: number): number => {
-  const vHalf = (fovDeg * Math.PI) / 360;
-  const half = Math.min(vHalf, Math.atan(Math.tan(vHalf) * aspect)) * FIT_MARGIN;
+  const half = fitHalfAngle(aspect, fovDeg);
   const need = Math.max(...angles.map((a) => {
     const t = Math.min(a, Math.PI / 2);
     return Math.cos(t) + Math.sin(t) / Math.tan(half);
@@ -84,7 +99,7 @@ const MAX_CAMERA_LAT = 50;
 
 export interface CameraRig {
   readonly camera: PerspectiveCamera;
-  /** Ease toward framing these world points (the route: origin first, newest last). Instant under reduced motion. */
+  /** Ease toward framing these world points (the route: origin first, newest last), or jump there when `instant`. */
   frame(points: readonly Vec3[], instant: boolean): void;
   update(dtMs: number): void;
   resize(aspect: number): void;
@@ -136,4 +151,22 @@ export const createCameraRig = (aspect: number): CameraRig => {
       apply();
     },
   };
+};
+
+/**
+ * Framing policy. Full motion: always ease to the new route. Reduced motion:
+ * hold still while the newest point is in view; otherwise cut. Returns true
+ * when a cut moved the camera (callers fade and mark the frame `cut`).
+ */
+export const applyFraming = (rig: CameraRig, points: readonly Vec3[], reducedMotion: boolean): boolean => {
+  if (!reducedMotion) {
+    rig.frame(points, false);
+    return false;
+  }
+  const newest = points[points.length - 1];
+  const cam = rig.camera;
+  if (!newest || inView(cam.position.toArray(), newest, cam.aspect, cam.fov)) return false;
+  const before = cam.position.clone();
+  rig.frame(points, true);
+  return !before.equals(cam.position);
 };

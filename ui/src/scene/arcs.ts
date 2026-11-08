@@ -1,10 +1,12 @@
 import {
   AdditiveBlending, Color, InstancedInterleavedBuffer, InterleavedBufferAttribute, Sprite, SpriteMaterial, type Object3D,
+  type Texture,
 } from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
-import { angularDistance, arcPoints, type Vec3 } from "../geo";
+import type { Vec3 } from "../geo";
+import { writeArcPoints } from "./arcGeometry";
 import type { PoseMap } from "./globePoses";
 import { glowTexture } from "./glow";
 import { PULSE_MS, pulseHead, pulseIntensity } from "./pulse";
@@ -20,8 +22,8 @@ export interface ArcInfo {
 }
 
 export interface Arcs {
-  /** Endpoints come only from `poses`; arcs are keyed by `to`. */
-  update(poses: PoseMap, arcs: readonly ArcInfo[], nowMs: number, reducedMotion: boolean): void;
+  /** Endpoints come only from `poses`; arcs are keyed by `to` within a trace `generation`. */
+  update(poses: PoseMap, arcs: readonly ArcInfo[], nowMs: number, reducedMotion: boolean, generation: number): void;
   setResolution(width: number, height: number, pixelRatio: number): void;
   /** Global fade (the tunnel lane fades globe arcs out). */
   setOpacity(o: number): void;
@@ -48,9 +50,13 @@ interface Entry {
   readonly bornAt: number;
   readonly seed: number;
   estimated: boolean;
+  /** Parsed endpoint colours, re-parsed only when the hex strings change. */
+  readonly colorFrom: Color;
+  readonly colorTo: Color;
+  colorKey: string;
 }
 
-const makeEntry = (to: number, nowMs: number, estimated: boolean): Entry => {
+const makeEntry = (to: number, nowMs: number, estimated: boolean, texture: Texture): Entry => {
   const geometry = new LineSegmentsGeometry();
   const pos = new Float32Array(SEGMENTS * 6);
   const col = new Float32Array(SEGMENTS * 6);
@@ -73,33 +79,26 @@ const makeEntry = (to: number, nowMs: number, estimated: boolean): Entry => {
   line.frustumCulled = false;
   line.renderOrder = 2;
   const head = new Sprite(new SpriteMaterial({
-    map: glowTexture(), blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
+    map: texture, blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
   }));
   head.renderOrder = 4;
-  return { line, material, pos, col, dist, posBuf, colBuf, distBuf, head, bornAt: nowMs, seed: (to * 0.381966) % 1, estimated };
+  return { line, material, pos, col, dist, posBuf, colBuf, distBuf, head, bornAt: nowMs, seed: (to * 0.381966) % 1, estimated,
+    colorFrom: new Color(), colorTo: new Color(), colorKey: "" };
 };
 
-const len = (v: Vec3): number => Math.hypot(...v);
-const unit = (v: Vec3): Vec3 => {
-  const l = len(v);
-  return [v[0] / l, v[1] / l, v[2] / l];
+/** Angle between two (not necessarily unit) vectors, without allocating. */
+const angleBetween = (a: Vec3, b: Vec3): number => {
+  const cx = a[1] * b[2] - a[2] * b[1];
+  const cy = a[2] * b[0] - a[0] * b[2];
+  const cz = a[0] * b[1] - a[1] * b[0];
+  return Math.atan2(Math.hypot(cx, cy, cz), a[0] * b[0] + a[1] * b[1] + a[2] * b[2]);
 };
 
-/** Arc between two poses: great circle with altitude ∝ angle, radius blended between the endpoints. */
-const curve = (a: Vec3, b: Vec3): Vec3[] => {
-  const ra = len(a);
-  const rb = len(b);
-  return arcPoints(unit(a), unit(b), SEGMENTS).map((p, i) => {
-    const r = ra + ((rb - ra) * i) / SEGMENTS;
-    return [p[0] * r, p[1] * r, p[2] * r];
-  });
-};
-
-export const createArcs = (parent: Object3D): Arcs => {
-  const entries = new Map<number, Entry>();
-  const cFrom = new Color();
-  const cTo = new Color();
-  const c = new Color();
+export const createArcs = (parent: Object3D, texture: () => Texture = glowTexture): Arcs => {
+  const entries = new Map<string, Entry>();
+  // Scratch shared by every arc (fill runs synchronously, one arc at a time).
+  const pts = new Float32Array((SEGMENTS + 1) * 3);
+  const rgb = new Float32Array((SEGMENTS + 1) * 3);
   let globalOpacity = 1;
   let resolution = { w: 1, h: 1, dpr: 1 };
 
@@ -108,7 +107,7 @@ export const createArcs = (parent: Object3D): Arcs => {
     e.material.linewidth = LINE_WIDTH_PX * resolution.dpr;
   };
 
-  const remove = (k: number, e: Entry): void => {
+  const remove = (k: string, e: Entry): void => {
     parent.remove(e.line, e.head);
     e.line.geometry.dispose();
     e.material.dispose();
@@ -116,27 +115,38 @@ export const createArcs = (parent: Object3D): Arcs => {
     entries.delete(k);
   };
 
-  const fill = (e: Entry, pts: Vec3[], info: ArcInfo, nowMs: number, reducedMotion: boolean, alpha: number): void => {
-    cFrom.set(info.colorFrom);
-    cTo.set(info.colorTo);
+  const fill = (e: Entry, a: Vec3, b: Vec3, info: ArcInfo, nowMs: number, reducedMotion: boolean, alpha: number): void => {
+    const key = info.colorFrom + info.colorTo;
+    if (key !== e.colorKey) {
+      e.colorFrom.set(info.colorFrom);
+      e.colorTo.set(info.colorTo);
+      e.colorKey = key;
+    }
+    const { colorFrom: cf, colorTo: ct } = e;
     const age = nowMs - e.bornAt;
     const opts = { reducedMotion, estimated: info.estimated, seed: e.seed };
+    const gain = alpha * ARC_GAIN;
+    writeArcPoints(pts, a, b, SEGMENTS);
+    // Per-vertex colour = endpoint gradient × pulse brightness, computed once per vertex.
+    for (let v = 0; v <= SEGMENTS; v++) {
+      const u = v / SEGMENTS;
+      const k = pulseIntensity(u, age, nowMs, opts) * gain;
+      rgb[v * 3] = (cf.r + (ct.r - cf.r) * u) * k;
+      rgb[v * 3 + 1] = (cf.g + (ct.g - cf.g) * u) * k;
+      rgb[v * 3 + 2] = (cf.b + (ct.b - cf.b) * u) * k;
+    }
     let acc = 0;
     for (let i = 0; i < SEGMENTS; i++) {
-      const p0 = pts[i]!;
-      const p1 = pts[i + 1]!;
-      e.pos.set(p0, i * 6);
-      e.pos.set(p1, i * 6 + 3);
+      const s0 = i * 3;
+      const s1 = s0 + 3;
+      const o = i * 6;
+      e.pos[o] = pts[s0]!; e.pos[o + 1] = pts[s0 + 1]!; e.pos[o + 2] = pts[s0 + 2]!;
+      e.pos[o + 3] = pts[s1]!; e.pos[o + 4] = pts[s1 + 1]!; e.pos[o + 5] = pts[s1 + 2]!;
+      e.col[o] = rgb[s0]!; e.col[o + 1] = rgb[s0 + 1]!; e.col[o + 2] = rgb[s0 + 2]!;
+      e.col[o + 3] = rgb[s1]!; e.col[o + 4] = rgb[s1 + 1]!; e.col[o + 5] = rgb[s1 + 2]!;
       e.dist[i * 2] = acc;
-      acc += Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+      acc += Math.hypot(pts[s1]! - pts[s0]!, pts[s1 + 1]! - pts[s0 + 1]!, pts[s1 + 2]! - pts[s0 + 2]!);
       e.dist[i * 2 + 1] = acc;
-      for (const [j, u] of [[0, i / SEGMENTS], [3, (i + 1) / SEGMENTS]] as const) {
-        const k = pulseIntensity(u, age, nowMs, opts) * alpha * ARC_GAIN;
-        c.copy(cFrom).lerp(cTo, u).multiplyScalar(k);
-        e.col[i * 6 + j] = c.r;
-        e.col[i * 6 + j + 1] = c.g;
-        e.col[i * 6 + j + 2] = c.b;
-      }
     }
     e.posBuf.needsUpdate = true;
     e.colBuf.needsUpdate = true;
@@ -146,27 +156,28 @@ export const createArcs = (parent: Object3D): Arcs => {
     e.head.visible = travelling;
     if (travelling) {
       const h = pulseHead(age);
-      const idx = Math.min(Math.round(h * SEGMENTS), SEGMENTS);
-      e.head.position.set(...pts[idx]!);
+      const idx = Math.min(Math.round(h * SEGMENTS), SEGMENTS) * 3;
+      e.head.position.set(pts[idx]!, pts[idx + 1]!, pts[idx + 2]!);
       e.head.scale.setScalar(HEAD_SIZE);
       const hm = e.head.material as SpriteMaterial;
-      hm.color.copy(cFrom).lerp(cTo, h).multiplyScalar(3);
+      hm.color.copy(cf).lerp(ct, h).multiplyScalar(3);
       hm.opacity = alpha;
     }
   };
 
   return {
-    update: (poses, arcs, nowMs, reducedMotion) => {
-      const wanted = new Set(arcs.map((a) => a.to));
+    update: (poses, arcs, nowMs, reducedMotion, generation) => {
+      const keyOf = (to: number): string => `${generation}:${to}`;
+      const wanted = new Set(arcs.map((a) => keyOf(a.to)));
       for (const [k, e] of entries) if (!wanted.has(k)) remove(k, e);
       for (const info of arcs) {
         const a = poses.get(info.from);
         const b = poses.get(info.to);
-        let e = entries.get(info.to);
+        let e = entries.get(keyOf(info.to));
         if (!e) {
-          e = makeEntry(info.to, nowMs, info.estimated);
+          e = makeEntry(info.to, nowMs, info.estimated, texture());
           applyResolution(e);
-          entries.set(info.to, e);
+          entries.set(keyOf(info.to), e);
           parent.add(e.line, e.head);
         }
         if (e.estimated !== info.estimated) {
@@ -174,13 +185,13 @@ export const createArcs = (parent: Object3D): Arcs => {
           e.material.dashed = info.estimated;
           e.material.needsUpdate = true;
         }
-        const degenerate = !a || !b || angularDistance(unit(a.pos), unit(b.pos)) < MIN_ANGLE;
+        const degenerate = !a || !b || angleBetween(a.pos, b.pos) < MIN_ANGLE;
         e.line.visible = !degenerate;
         if (degenerate) {
           e.head.visible = false;
           continue;
         }
-        fill(e, curve(a.pos, b.pos), info, nowMs, reducedMotion, Math.min(a.opacity, b.opacity) * globalOpacity);
+        fill(e, a.pos, b.pos, info, nowMs, reducedMotion, Math.min(a.opacity, b.opacity) * globalOpacity);
       }
     },
     setResolution: (w, h, dpr) => {

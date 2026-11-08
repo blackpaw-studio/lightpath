@@ -47,8 +47,8 @@ describe("createTunnelPoseSource", () => {
   const frame = tunnelFrame(origin, [0, 1, 0]);
   const gate = (ttl: number, s: number): TunnelGate =>
     ({ ttl, s, title: "", detail: "", color: "#22e6ff", broken: false });
-  const input = (nowMs: number): PoseInput => ({
-    layout: { origin, hops: [] }, nowMs, dtMs: 1000 / 60, reducedMotion: false, rotationY: 0,
+  const input = (nowMs: number, generation = 0): PoseInput => ({
+    layout: { generation, origin, hops: [] }, nowMs, dtMs: 1000 / 60, reducedMotion: false, rotationY: 0,
   });
   const globePoses = (keys: number[]): PoseMap => new Map(keys.map((k) => [k, pose(origin)]));
 
@@ -65,6 +65,18 @@ describe("createTunnelPoseSource", () => {
       };
     });
   };
+
+  it("a new trace generation restarts depths: a reused ttl starts at its new depth instead of gliding from the old trace", () => {
+    let gates = [gate(1, 0.6), gate(3, 4)];
+    const src = createTunnelPoseSource(
+      () => globePoses([ORIGIN_KEY, ...gates.map((g) => g.ttl)]), () => ({ viewT: 1, frame, gates }),
+    );
+    src.source(input(0, 1));
+    gates = [gate(1, 0.6), gate(3, 1.2)];
+    const poses = src.source(input(1000 / 60, 2));
+    expect(src.depths().get(3)).toBe(1.2);
+    expect(dist(poses.get(3)!.pos, tunnelPoint(frame, 1.2))).toBeLessThan(1e-12);
+  });
 
   it("an out-of-order hop pushes later gates deeper by gliding, never a depth teleport", () => {
     // ttl 3 is laid out at s=1.2; then ttl 2 arrives late and pushes it to 1.8.

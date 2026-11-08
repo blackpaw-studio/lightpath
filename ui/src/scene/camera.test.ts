@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { angularDistance, latLonToVec3 } from "../geo";
 import { Vector3 } from "three";
 import { checkTrace, type Frame } from "../invariants";
-import { clampLatitude, createCameraRig, fitDistance, frameTarget, springStep } from "./camera";
+import type { Vec3 } from "../geo";
+import { applyFraming, clampLatitude, createCameraRig, fitDistance, frameTarget, inView, springStep } from "./camera";
 
 describe("springStep (critically damped)", () => {
   it("converges to the target without overshoot", () => {
@@ -120,5 +121,46 @@ describe("createCameraRig reframing", () => {
 
   it.each([["desktop", 16 / 9], ["phone", 375 / 812]])("never pans a framed hop out of view and back (%s)", (_, aspect) => {
     expect(checkTrace(run(aspect), { maxJumpPx: Infinity, flickerWindowMs: 1000 })).toEqual([]);
+  });
+});
+
+describe("inView", () => {
+  const cam = (lat: number, lon: number, d: number): Vec3 => latLonToVec3(lat, lon).map((x) => x * d) as unknown as Vec3;
+
+  it("accepts the point under the camera and rejects the far side", () => {
+    expect(inView(cam(40, -74, 3), latLonToVec3(40, -74), 16 / 9, 35)).toBe(true);
+    expect(inView(cam(40, -74, 3), latLonToVec3(-40, 106), 16 / 9, 35)).toBe(false);
+  });
+
+  it("uses the narrower half-FOV, so portrait rejects what landscape accepts", () => {
+    const p = latLonToVec3(40, -34); // ~9.4° off the camera axis at distance 4
+    expect(inView(cam(40, -74, 4), p, 16 / 9, 35)).toBe(true);
+    expect(inView(cam(40, -74, 4), p, 375 / 812, 35)).toBe(false);
+  });
+});
+
+describe("applyFraming", () => {
+  const route = [
+    [40.68, -73.94], [40.71, -74.01], [39.04, -77.49], [51.51, -0.13], [52.37, 4.9], [50.11, 8.68],
+    [19.08, 72.88], [1.35, 103.82], [35.68, 139.69],
+  ].map(([lat, lon]) => latLonToVec3(lat!, lon!));
+
+  it("glides (never cuts) with full motion", () => {
+    const rig = createCameraRig(16 / 9);
+    expect(route.map((_, i) => applyFraming(rig, route.slice(0, i + 1), false))).not.toContain(true);
+  });
+
+  it("under reduced motion holds still while the newest hop fits, cutting only when it would leave", () => {
+    const rig = createCameraRig(16 / 9);
+    const cuts = route.map((_, i) => {
+      const before = rig.camera.position.clone();
+      const cut = applyFraming(rig, route.slice(0, i + 1), true);
+      expect(cut).toBe(!before.equals(rig.camera.position));
+      expect(inView(rig.camera.position.toArray(), route[i]!, 16 / 9, 35)).toBe(true);
+      return cut;
+    });
+    // Brooklyn's local hops share one framing: at most one cut for hops 1–3.
+    expect(cuts.slice(1, 3)).toEqual([false, false]);
+    expect(cuts.filter(Boolean).length).toBeLessThan(route.length / 2);
   });
 });

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { angularDistance, latLonToVec3, type Vec3 } from "../geo";
 import type { GlobeLayout } from "./layout";
-import { appearance, APPEAR_MS, emptyPoseState, ORIGIN_KEY, stepGlobePoses, type PoseInput } from "./globePoses";
+import { appearance, APPEAR_MS, createGlobePoseSource, emptyPoseState, ORIGIN_KEY, stepGlobePoses, type PoseInput } from "./globePoses";
 
-const layout = (hops: [number, Vec3][]): GlobeLayout => ({
+const layout = (hops: [number, Vec3][], generation = 1): GlobeLayout => ({
+  generation,
   origin: latLonToVec3(0, 0),
   hops: hops.map(([ttl, pos]) => ({ ttl, pos, estimated: false, timeout: false, rttMs: 5, color: "#22e6ff" })),
 });
@@ -65,8 +66,22 @@ describe("stepGlobePoses", () => {
   });
 
   it("emits no origin pose when the layout has none", () => {
-    const { poses } = stepGlobePoses(emptyPoseState, input({ origin: null, hops: [] }, 0));
+    const { poses } = stepGlobePoses(emptyPoseState, input({ generation: 0, origin: null, hops: [] }, 0));
     expect(poses.size).toBe(0);
+  });
+
+  it("restarts hops on a new trace generation, even in the same frame as hop 1", () => {
+    const a1 = stepGlobePoses(emptyPoseState, input(layout([[1, a]], 1), 0)).state;
+    const settled = stepGlobePoses(a1, input(layout([[1, a]], 1), 5000)).state;
+    const next = stepGlobePoses(settled, input(layout([[1, b]], 2), 5016));
+    expect(next.poses.get(1)).toMatchObject({ pos: b, scale: 0 }); // blooms in at its own spot, no glide
+    expect(next.poses.get(ORIGIN_KEY)!.scale).toBe(1); // the user's origin carries over
+  });
+
+  it("keeps the previous origin when a new trace has none yet", () => {
+    const s = stepGlobePoses(emptyPoseState, input(layout([], 1), 0)).state;
+    const { poses } = stepGlobePoses(s, input({ generation: 2, origin: null, hops: [] }, 5000));
+    expect(poses.get(ORIGIN_KEY)).toMatchObject({ pos: latLonToVec3(0, 0), scale: 1, opacity: 1 });
   });
 
   it("applies the globe rotation to world positions", () => {
@@ -74,5 +89,31 @@ describe("stepGlobePoses", () => {
     const p = poses.get(ORIGIN_KEY)!.pos; // (1,0,0) rotated +90° about y → (0,0,-1)
     expect(p[0]).toBeCloseTo(0, 12);
     expect(p[2]).toBeCloseTo(-1, 12);
+  });
+});
+
+describe("createGlobePoseSource", () => {
+  const a = latLonToVec3(10, 10);
+  const b = latLonToVec3(10, 60);
+  const frames = [0, 16, 32, 48].map((t, i) => input(layout(i < 2 ? [[1, a]] : [[1, b]]), t));
+
+  it("produces the same poses as stepping the pure function", () => {
+    const source = createGlobePoseSource();
+    let s = emptyPoseState;
+    for (const f of frames) {
+      const r = stepGlobePoses(s, f);
+      s = r.state;
+      expect([...source(f)]).toEqual([...r.poses]);
+    }
+  });
+
+  it("double-buffers its maps: the previous frame's map stays intact, then is reused", () => {
+    const source = createGlobePoseSource();
+    const m0 = source(frames[0]!);
+    const snapshot = [...m0];
+    const m1 = source(frames[1]!);
+    expect(m1).not.toBe(m0);
+    expect([...m0]).toEqual(snapshot);
+    expect(source(frames[2]!)).toBe(m0);
   });
 });

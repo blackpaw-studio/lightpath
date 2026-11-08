@@ -64,6 +64,8 @@ export interface GateFrameInput {
   readonly depths: ReadonlyMap<number, number>;
   readonly frame: TunnelFrame | null;
   readonly cameraPos: Vec3Like;
+  /** Trace generation (TraceState.generation): a new trace rebuilds every hop's gate and label. */
+  readonly generation: number;
   /** Ring opacity (plan: 0.4 → 0.8 of viewT). */
   readonly ringFade: number;
   /** Label opacity (plan: 0.8 → 1 of viewT). */
@@ -89,7 +91,8 @@ interface Entry {
   readonly reticleMaterial: MeshBasicMaterial;
   readonly halo: ShaderMaterial | null;
   readonly label: GateLabelView | null;
-  broken: boolean;
+  readonly broken: boolean;
+  readonly generation: number;
 }
 
 const additive = (): MeshBasicMaterial =>
@@ -102,7 +105,7 @@ const arcRing = (geometry: TorusGeometry, material: MeshBasicMaterial, count: nu
     return m;
   });
 
-const makeEntry = (key: number, broken: boolean, parent: Object3D): Entry => {
+const makeEntry = (key: number, broken: boolean, generation: number, parent: Object3D): Entry => {
   const material = additive();
   const reticleMaterial = additive();
   const rings = broken ? arcRing(brokenGeometry, material, BROKEN_ARCS, key * 0.37) : [new Mesh(ringGeometry, material)];
@@ -115,7 +118,7 @@ const makeEntry = (key: number, broken: boolean, parent: Object3D): Entry => {
   parent.add(group);
   const label = key === ORIGIN_KEY ? null : createGateLabel();
   if (label) parent.add(label.object);
-  return { group, rings, reticle, material, reticleMaterial, halo, label, broken };
+  return { group, rings, reticle, material, reticleMaterial, halo, label, broken, generation };
 };
 
 const disposeEntry = (e: Entry, parent: Object3D): void => {
@@ -202,7 +205,8 @@ export const createGates = (parent: Object3D): Gates => {
       for (const [k, e] of entries) {
         const gate = byTtl.get(k);
         const gone = !input.poses.has(k) || (k !== ORIGIN_KEY && !gate);
-        if (gone || (gate && gate.broken !== e.broken)) {
+        const stale = k !== ORIGIN_KEY && e.generation !== input.generation;
+        if (gone || stale || (gate && gate.broken !== e.broken)) {
           disposeEntry(e, parent);
           entries.delete(k);
         }
@@ -212,7 +216,7 @@ export const createGates = (parent: Object3D): Gates => {
         if (k !== ORIGIN_KEY && !gate) continue;
         let e = entries.get(k);
         if (!e) {
-          e = makeEntry(k, gate?.broken ?? false, parent);
+          e = makeEntry(k, gate?.broken ?? false, input.generation, parent);
           entries.set(k, e);
         }
         updateEntry(k, e, pose, gate, input);

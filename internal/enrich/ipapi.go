@@ -16,10 +16,13 @@ import (
 )
 
 const (
-	ipAPIFields    = "status,message,query,lat,lon,city,countryCode"
-	batchURL       = "http://ip-api.com/batch?fields=" + ipAPIFields
-	selfURL        = "http://ip-api.com/json/?fields=" + ipAPIFields
-	batchWindow    = 250 * time.Millisecond
+	ipAPIFields = "status,message,query,lat,lon,city,countryCode"
+	batchURL    = "http://ip-api.com/batch?fields=" + ipAPIFields
+	selfURL     = "http://ip-api.com/json/?fields=" + ipAPIFields
+	// batchWindow merges hops that arrive ~300 ms apart: a 15-hop trace
+	// fits in three windows (≤3 requests), and the first hop of a window
+	// still gets its result well inside the 2 s lookup timeout.
+	batchWindow    = 1250 * time.Millisecond
 	maxBatch       = 100
 	requestsPerIv  = 15 // ip-api free tier: 15 requests per minute per IP
 	rateInterval   = time.Minute
@@ -45,23 +48,22 @@ type IPAPIConfig struct {
 }
 
 type call struct {
-	done    chan struct{}
-	geo     Geo
-	ok      bool
-	waiters int  // callers still waiting (guarded by IPAPI.mu)
-	sent    bool // taken into a request (guarded by IPAPI.mu)
+	done chan struct{}
+	geo  Geo
+	ok   bool
 }
 
 // maxPending bounds how many distinct IPs may be queued or in a request.
 const maxPending = 1024
 
 // IPAPI geolocates public IPs through ip-api.com. One sender goroutine owns
-// all batch traffic: it waits out a 250 ms window (or until 100 IPs queue),
+// all batch traffic: it waits out a 1.25 s window (or until 100 IPs queue),
 // takes a token from a 15 req/min bucket, honours X-Rl/X-Ttl/429 blocks, and
 // only then takes up to 100 queued IPs, so everything that queued while it
-// waited rides in the same request. IPs whose callers all gave up before being
-// sent are dropped. At most one batch request is in flight; Self requests share
-// the same limiter. Results (including "fail" results) are cached for the
+// waited rides in the same request. A caller that gives up (2 s) does not
+// remove its IP: it is still fetched later and warms the cache for the next
+// trace. At most one batch request is in flight and at most maxPending IPs are
+// queued or in flight; Self requests share the same limiter. Results (including "fail" results) are cached for the
 // lifetime of the value, which is longer than one run on purpose: it conserves
 // the shared rate-limit budget.
 type IPAPI struct {
@@ -75,8 +77,7 @@ type IPAPI struct {
 	mu           sync.Mutex
 	cache        map[netip.Addr]*call // completed
 	pending      map[netip.Addr]*call // queued or in a request
-	queue        []netip.Addr         // FIFO; may hold dropped or duplicate entries
-	queued       int                  // live, unsent calls in queue
+	queue        []netip.Addr         // FIFO of unsent IPs, each pending exactly once
 	blockedUntil time.Time            // no request may start before this
 	inflightReqs int                  // requests sent and not yet answered
 	rlLeft       int                  // requests left per the last X-Rl, minus sends since
@@ -127,8 +128,7 @@ func (a *IPAPI) Lookup(ctx context.Context, addr netip.Addr) (Geo, bool) {
 	case <-c.done:
 		return c.geo, c.ok
 	case <-ctx.Done():
-		a.abandon(addr, c)
-		return Geo{}, false
+		return Geo{}, false // the IP stays queued and will warm the cache
 	}
 }
 
@@ -139,7 +139,6 @@ var closedCall = func() *call {
 }()
 
 // enqueue returns the call for addr: cached, already pending, or newly queued.
-// Each call registers one waiter; Lookup releases it via abandon.
 func (a *IPAPI) enqueue(addr netip.Addr) *call {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -147,31 +146,16 @@ func (a *IPAPI) enqueue(addr netip.Addr) *call {
 		return c
 	}
 	if c, ok := a.pending[addr]; ok {
-		c.waiters++
 		return c
 	}
 	if a.ctx.Err() != nil || len(a.pending) >= maxPending {
 		return closedCall
 	}
-	c := &call{done: make(chan struct{}), waiters: 1}
+	c := &call{done: make(chan struct{})}
 	a.pending[addr] = c
 	a.queue = append(a.queue, addr)
-	a.queued++
 	a.signal()
 	return c
-}
-
-// abandon releases one waiter; an unsent call nobody waits for is dropped.
-func (a *IPAPI) abandon(addr netip.Addr, c *call) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	c.waiters--
-	if c.waiters > 0 || c.sent || a.pending[addr] != c {
-		return
-	}
-	delete(a.pending, addr)
-	a.queued--
-	close(c.done)
 }
 
 func (a *IPAPI) signal() {
@@ -184,7 +168,7 @@ func (a *IPAPI) signal() {
 func (a *IPAPI) queuedCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.queued
+	return len(a.queue)
 }
 
 // run is the single sender loop.
@@ -232,23 +216,13 @@ func (a *IPAPI) awaitWindow() bool {
 	}
 }
 
-// takeBatch removes up to maxBatch live calls from the queue and marks them sent.
+// takeBatch removes and returns up to maxBatch queued IPs.
 func (a *IPAPI) takeBatch() []netip.Addr {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	var batch []netip.Addr
-	i := 0
-	for ; i < len(a.queue) && len(batch) < maxBatch; i++ {
-		addr := a.queue[i]
-		c, ok := a.pending[addr]
-		if !ok || c.sent {
-			continue // dropped, or a duplicate of an entry already taken
-		}
-		c.sent = true
-		a.queued--
-		batch = append(batch, addr)
-	}
-	a.queue = append([]netip.Addr(nil), a.queue[i:]...)
+	n := min(len(a.queue), maxBatch)
+	batch := append([]netip.Addr(nil), a.queue[:n]...)
+	a.queue = append([]netip.Addr(nil), a.queue[n:]...)
 	return batch
 }
 
@@ -341,7 +315,7 @@ func (a *IPAPI) failPending() {
 		delete(a.pending, addr)
 		close(c.done)
 	}
-	a.queue, a.queued = nil, 0
+	a.queue = nil
 }
 
 type geoEntry struct {

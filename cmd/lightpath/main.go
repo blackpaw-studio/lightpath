@@ -34,17 +34,15 @@ const (
 	traceStopTimeout  = 10 * time.Second // cap on waiting for traces to return at shutdown
 )
 
-// errLiveNotWired is returned until the real runner and enricher are wired in.
-var errLiveNotWired = errors.New("live tracing is not wired yet; use --replay <file>")
-
 // deps holds everything run touches outside the process, so tests can inject fakes.
 type deps struct {
+	stdout      io.Writer
 	stderr      io.Writer
 	listen      func(network, addr string) (net.Listener, error)
 	openBrowser func(url string) error
 	clock       replay.Clock
 	static      fs.FS
-	live        func() (server.TraceSource, server.Validator, error)
+	live        func(ctx context.Context) (server.TraceSource, server.Validator, error)
 	writeFile   func(path string, data []byte) error
 }
 
@@ -54,23 +52,23 @@ func defaultDeps() deps {
 		dist = nil // placeholder page
 	}
 	return deps{
+		stdout:      os.Stdout,
 		stderr:      os.Stderr,
 		listen:      net.Listen,
 		openBrowser: browser.Open,
 		clock:       replay.SystemClock,
 		static:      dist,
-		live: func() (server.TraceSource, server.Validator, error) {
-			return nil, nil, errLiveNotWired
-		},
-		writeFile: func(path string, data []byte) error { return replay.WriteFileAtomic(path, data, 0o600) },
+		live:        newLiveSource,
+		writeFile:   func(path string, data []byte) error { return replay.WriteFileAtomic(path, data, 0o600) },
 	}
 }
 
 type options struct {
-	port   int
-	replay string
-	record string
-	noOpen bool
+	port        int
+	replay      string
+	record      string
+	noOpen      bool
+	showVersion bool
 }
 
 func parseFlags(args []string, errOut io.Writer) (options, error) {
@@ -81,6 +79,7 @@ func parseFlags(args []string, errOut io.Writer) (options, error) {
 	fset.StringVar(&o.replay, "replay", "", "replay a recorded event stream instead of running traceroute")
 	fset.StringVar(&o.record, "record", "", "write each trace's event stream to this file")
 	fset.BoolVar(&o.noOpen, "no-open", false, "do not open a browser")
+	fset.BoolVar(&o.showVersion, "version", false, "print version and exit")
 	if err := fset.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -99,7 +98,7 @@ type app struct {
 }
 
 // source builds the trace source and target validator for the chosen mode.
-func source(o options, d deps) (server.TraceSource, server.Validator, error) {
+func source(ctx context.Context, o options, d deps) (server.TraceSource, server.Validator, error) {
 	var (
 		src server.TraceSource
 		val server.Validator
@@ -113,7 +112,7 @@ func source(o options, d deps) (server.TraceSource, server.Validator, error) {
 		val = func(string) error { return nil } // the target is ignored in replay mode
 	} else {
 		var err error
-		if src, val, err = d.live(); err != nil {
+		if src, val, err = d.live(ctx); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -145,7 +144,7 @@ func listenLoopback(d deps, port int) (net.Listener, error) {
 
 // start validates inputs, binds loopback, builds the handler and opens the browser.
 func start(ctx context.Context, o options, d deps) (*app, error) {
-	src, val, err := source(o, d)
+	src, val, err := source(ctx, o, d)
 	if err != nil {
 		return nil, err
 	}
@@ -169,30 +168,42 @@ func start(ctx context.Context, o options, d deps) (*app, error) {
 	return &app{ln: ln, handler: h}, nil
 }
 
-// serve blocks until ctx is cancelled, then shuts down gracefully.
-func (a *app) serve(ctx context.Context) error {
+// serve blocks until ctx is cancelled or the HTTP server fails. Either way it
+// then calls stopApp, which ends every WebSocket session and trace, and waits
+// for those traces (and their child processes) to return.
+func (a *app) serve(ctx context.Context, stopApp context.CancelFunc) error {
 	srv := &http.Server{Handler: a.handler, ReadHeaderTimeout: readHeaderTimeout}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(a.ln) }()
+	var serveErr error
 	select {
-	case err := <-errc:
-		return err
+	case serveErr = <-errc:
+		_ = srv.Close() // Serve already failed; drop any remaining connections
 	case <-ctx.Done():
+		serveErr = shutdown(ctx, srv, errc)
 	}
+	// Hijacked WebSockets are invisible to Shutdown; their sessions end with
+	// the app context, and every trace child must be gone before we exit.
+	stopApp()
+	tctx, tcancel := context.WithTimeout(context.WithoutCancel(ctx), traceStopTimeout)
+	defer tcancel()
+	if err := a.handler.Wait(tctx); err != nil {
+		serveErr = errors.Join(serveErr, fmt.Errorf("waiting for traces to stop: %w", err))
+	}
+	return serveErr
+}
+
+// shutdown stops the HTTP server gracefully, closing it outright if the
+// graceful stop times out.
+func shutdown(ctx context.Context, srv *http.Server, errc <-chan error) error {
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(sctx); err != nil {
+		_ = srv.Close()
 		return err
 	}
 	if err := <-errc; !errors.Is(err, http.ErrServerClosed) {
 		return err
-	}
-	// Hijacked WebSockets are invisible to Shutdown; their sessions end with
-	// ctx, and every trace child must be gone before we exit.
-	tctx, tcancel := context.WithTimeout(context.WithoutCancel(ctx), traceStopTimeout)
-	defer tcancel()
-	if err := a.handler.Wait(tctx); err != nil {
-		return fmt.Errorf("waiting for traces to stop: %w", err)
 	}
 	return nil
 }
@@ -205,11 +216,17 @@ func run(ctx context.Context, args []string, d deps) error {
 	if err != nil {
 		return err
 	}
-	a, err := start(ctx, o, d)
+	if o.showVersion {
+		_, err := fmt.Fprintf(d.stdout, "lightpath %s\n", version)
+		return err
+	}
+	appCtx, stopApp := context.WithCancel(ctx)
+	defer stopApp()
+	a, err := start(appCtx, o, d)
 	if err != nil {
 		return err
 	}
-	return a.serve(ctx)
+	return a.serve(appCtx, stopApp)
 }
 
 func main() {

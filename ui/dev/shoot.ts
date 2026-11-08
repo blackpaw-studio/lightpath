@@ -41,6 +41,6 @@ const renderer = await page.evaluate(() => {
 });
 process.stdout.write(`renderer: ${renderer}\n`);
 const violations = checkTrace(frames, { maxJumpPx: 48, flickerWindowMs: 1000 });
-process.stdout.write(`checkTrace: ${frames.length} frames, ${violations.length} violations\n`);
+process.stdout.write(`checkTrace: ${frames.length} frames, ${frames.filter((f) => f.cut).length} cuts, ${violations.length} violations\n`);
 violations.slice(0, 10).forEach((v) => process.stdout.write(`  ${v.kind} ${v.id} @${v.frame}: ${v.detail}\n`));
 await browser.close();
