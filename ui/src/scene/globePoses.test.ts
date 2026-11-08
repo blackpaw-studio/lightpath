@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { angularDistance, latLonToVec3, type Vec3 } from "../geo";
 import type { GlobeLayout } from "./layout";
-import { appearance, APPEAR_MS, createGlobePoseSource, emptyPoseState, ORIGIN_KEY, stepGlobePoses, type PoseInput } from "./globePoses";
+import {
+  appearance, APPEAR_MS, createGlobePoseSource, emptyPoseState, GLIDE_MAX_RAD_PER_S, ORIGIN_KEY, stepGlobePoses, type PoseInput,
+} from "./globePoses";
 
 const layout = (hops: [number, Vec3][], generation = 1): GlobeLayout => ({
   generation,
@@ -53,6 +55,22 @@ describe("stepGlobePoses", () => {
     }
     expect(maxStep).toBeLessThan(angularDistance(a, b) * 0.1);
     expect(angularDistance(prev, b)).toBeLessThan(1e-4);
+  });
+
+  it("caps glide speed on a cross-globe relocation (hop.update moving a hop 108°), then still converges", () => {
+    const far = latLonToVec3(10, 118);
+    let s = stepGlobePoses(emptyPoseState, input(layout([[1, a]]), 0)).state;
+    let prev: Vec3 = a;
+    let maxStep = 0;
+    for (let t = 16; t <= 4000; t += 16) {
+      const r = stepGlobePoses(s, input(layout([[1, far]]), t));
+      const pos = r.poses.get(1)!.pos;
+      maxStep = Math.max(maxStep, angularDistance(prev, pos));
+      prev = pos;
+      s = r.state;
+    }
+    expect(maxStep).toBeLessThanOrEqual(GLIDE_MAX_RAD_PER_S * 0.016 + 1e-9);
+    expect(angularDistance(prev, far)).toBeLessThan(1e-4);
   });
 
   it("does not move anything when dt is 0", () => {
