@@ -3,16 +3,16 @@ import { angularDistance, dot, latLonToVec3, normalize, scale, sub, type Vec3 } 
 import { FOV_DEG } from "./camera";
 import {
   cameraAt, DIVE_MS, easeInOutSine, focusDepth, globeTransition, layerFades, modeOf, rigUp, rotateBetween,
-  northUpSafe, reducedShot, S_HOME, startTransition, stepTransition, T_SURFACE, T_SWING, TUNNEL_FOV, viewTOf, type CameraInput, type Transition,
+  northUpSafe, REDUCED_MS, reducedShot, S_HOME, startTransition, stepTransition, T_SURFACE, T_SWING, TUNNEL_FOV, viewTOf, type CameraInput, type Transition,
 } from "./transition";
 import { tunnelFrame, tunnelPoint } from "./tunnelLayout";
 
 const near = (a: Vec3, b: Vec3, digits = 9): void => a.forEach((x, i) => expect(x).toBeCloseTo(b[i]!, digits));
 const dist = (a: Vec3, b: Vec3): number => Math.hypot(...sub(a, b));
-const run = (t: Transition, ms: number, dt = 1000 / 60): Transition[] => {
+const run = (t: Transition, ms: number, dt = 1000 / 60, durationMs = DIVE_MS): Transition[] => {
   const out: Transition[] = [];
   let cur = t;
-  for (let x = 0; x < ms - 1e-9; x += dt) out.push((cur = stepTransition(cur, dt)));
+  for (let x = 0; x < ms - 1e-9; x += dt) out.push((cur = stepTransition(cur, dt, durationMs)));
   return out;
 };
 
@@ -49,14 +49,14 @@ describe("transition timeline", () => {
     expect(modeOf(back)).toBe("surfacing");
   });
 
-  it("reduced motion holds the overhead shot between the two resting shots", () => {
-    const dive = run(startTransition(globeTransition, 1), DIVE_MS);
+  it("reduced motion cuts straight to the target's resting shot; the whole change runs within REDUCED_MS", () => {
     expect(reducedShot(globeTransition)).toBe("globe");
-    expect(dive.slice(0, -1).every((t) => reducedShot(t) === "overhead")).toBe(true);
-    expect(reducedShot(dive[dive.length - 1]!)).toBe("tunnel");
-    const back = run(startTransition(dive[dive.length - 1]!, 0), DIVE_MS);
-    expect(back.slice(0, -1).every((t) => reducedShot(t) === "overhead")).toBe(true);
-    expect(reducedShot(back[back.length - 1]!)).toBe("globe");
+    const dive = run(startTransition(globeTransition, 1), REDUCED_MS, 1000 / 60, REDUCED_MS);
+    expect(dive.every((t) => reducedShot(t) === "tunnel")).toBe(true);
+    expect(modeOf(dive[dive.length - 1]!)).toBe("tunnel");
+    const back = run(startTransition(dive[dive.length - 1]!, 0), REDUCED_MS, 1000 / 60, REDUCED_MS);
+    expect(back.every((t) => reducedShot(t) === "globe")).toBe(true);
+    expect(modeOf(back[back.length - 1]!)).toBe("globe");
   });
 
   it("starting toward the current target is a no-op", () => {

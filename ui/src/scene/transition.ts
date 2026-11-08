@@ -50,8 +50,9 @@ export const globeTransition: Transition = { progress: 0, target: 0 };
 export const startTransition = (t: Transition, target: ViewTarget): Transition =>
   t.target === target ? t : { ...t, target };
 
-export const stepTransition = (t: Transition, dtMs: number): Transition => {
-  const rate = Math.max(dtMs, 0) / DIVE_MS;
+/** Advance a run that takes `durationMs` end to end (reduced motion runs it in REDUCED_MS). */
+export const stepTransition = (t: Transition, dtMs: number, durationMs = DIVE_MS): Transition => {
+  const rate = Math.max(dtMs, 0) / durationMs;
   const raw = t.progress + (t.target === 1 ? rate : -rate);
   return { ...t, progress: raw >= 1 - SNAP ? 1 : raw <= SNAP ? 0 : raw };
 };
@@ -199,21 +200,17 @@ export const cameraAt = (viewT: number, { rigPos, orbitR, frame, camS, northUp }
   return { pos, look, up, fovDeg: FOV_DEG + (TUNNEL_FOV - FOV_DEG) * smoothstep(0.55, 1, viewT) };
 };
 
-export type ReducedShot = "globe" | "overhead" | "tunnel";
+export type ReducedShot = "globe" | "tunnel";
 
 /**
- * Reduced-motion camera: the rig at rest on the globe, the tunnel camera at
- * rest in the tunnel, and in between the overhead pose (above the origin, on
- * the tunnel axis) from which hops are seen streaming into or out of the tunnel.
+ * Reduced-motion camera: no flight, only the two resting shots. It cuts to the
+ * target's shot when a change starts (the scene crossfades the cut), and the
+ * hops travel within that same short run.
  */
-export const reducedShot = (t: Transition): ReducedShot => {
-  if (t.progress >= 1 && t.target === 1) return "tunnel";
-  if (t.progress <= 0 && t.target === 0) return "globe";
-  return "overhead";
-};
+export const reducedShot = (t: Transition): ReducedShot => (t.target === 1 ? "tunnel" : "globe");
 
 export const reducedCameraAt = (shot: ReducedShot, input: CameraInput): CameraPose =>
-  cameraAt(shot === "globe" ? 0 : shot === "tunnel" ? 1 : T_SWING, input);
+  cameraAt(shot === "globe" ? 0 : 1, input);
 
 export interface LayerFades {
   readonly surface: number;

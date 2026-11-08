@@ -6,7 +6,7 @@ import { Group, Matrix4, Object3D, PerspectiveCamera, Texture, Vector3 } from "t
 import { sampleTimeline } from "../../dev/sample";
 import { checkTrace, type Frame, type TraceOptions } from "../invariants";
 import { initialState, reduce, type TraceState } from "../reducer";
-import { VISIBLE_OPACITY } from "../testhooks";
+import { VISIBLE_OPACITY, type TraceFrame } from "../testhooks";
 import { normalize, sub, type Vec3 } from "../geo";
 import { createCameraRig } from "./camera";
 import { createGates } from "./gates";
@@ -15,7 +15,8 @@ import type { GateLabelView } from "./labels";
 import { markEntities } from "./marks";
 import { createNodes, type NodeInfo } from "./nodes";
 import { globeLayout } from "./layout";
-import { DIVE_MS, S_HOME, focusDepth, type CameraPose, type LayerFades } from "./transition";
+import { DIVE_MS, REDUCED_MS, S_HOME, focusDepth, type CameraPose, type LayerFades } from "./transition";
+import { crossfadeOpacity, crossfadeTrace } from "./crossfade";
 import { smoothstep } from "./easing";
 import { createTunnelController, type TunnelController } from "./tunnelController";
 import { FLICKER_WINDOW_MS, MAX_JUMP_PX, worldJumpBound } from "./motionBudget";
@@ -26,7 +27,7 @@ const doneState: TraceState = sampleTimeline.reduce((s, [, m]) => reduce(s, m), 
 
 interface Sim {
   readonly ctl: TunnelController;
-  run(ms: number): Frame[];
+  run(ms: number): TraceFrame[];
   /** A new reducer state (e.g. a new trace generation) for both the controller and the pose source. */
   setState(state: TraceState): void;
   /** Camera position of every frame run so far. */
@@ -72,7 +73,11 @@ const createSim = (w: number, h: number, reducedMotion: boolean, state: TraceSta
     cam.updateMatrixWorld(true);
   };
   let now = 0;
-  const frame = (): Frame => {
+  // Reduced motion: model the crossfade overlay the scene draws over each cut.
+  let shown: TraceFrame | null = null;
+  let snapshot: TraceFrame | null = null;
+  let fadeStart: number | null = null;
+  const frame = (): TraceFrame => {
     now += DT;
     ctl.advance(DT);
     const poses = ctl.poseSource({ layout, nowMs: now, dtMs: DT, reducedMotion, rotationY: 0 });
@@ -94,11 +99,14 @@ const createSim = (w: number, h: number, reducedMotion: boolean, state: TraceSta
     const entities = {
       ...Object.fromEntries([...poses].map(([k, p]) => {
         const s = project(p.pos);
-        return [String(k), { x: s.x, y: s.y, world: p.pos, visible: p.opacity > VISIBLE_OPACITY && s.inFrustum }];
+        return [String(k), { x: s.x, y: s.y, world: p.pos, opacity: p.opacity, visible: p.opacity > VISIBLE_OPACITY && s.inFrustum }];
       })),
       ...markEntities(nodes.marks(), gates.marks(), project),
     };
-    return { tMs: now, cut: ctl.cut(), entities };
+    if (ctl.cut()) [snapshot, fadeStart] = [shown, now];
+    const live: TraceFrame = { tMs: now, cut: ctl.cut(), entities };
+    shown = live;
+    return crossfadeTrace(live, snapshot, crossfadeOpacity(fadeStart, now, REDUCED_MS));
   };
   return {
     ctl, camTrail,
@@ -112,10 +120,11 @@ const createSim = (w: number, h: number, reducedMotion: boolean, state: TraceSta
 };
 
 /** Trace options with the world bound measured on this simulation's own globe and tunnel frames. */
-const optsFor = (frames: readonly Frame[], globeAt: number, tunnelAt: number): TraceOptions => {
-  const maxJumpWorld = worldJumpBound(frames[globeAt]!, frames[tunnelAt]!);
-  // A gate re-laid out by one MIN_GAP must still exceed the bound, or the world check could not see it.
-  expect(maxJumpWorld).toBeLessThan(MIN_GAP);
+const optsFor = (frames: readonly Frame[], globeAt: number, tunnelAt: number, durationMs = DIVE_MS): TraceOptions => {
+  const maxJumpWorld = worldJumpBound(frames[globeAt]!, frames[tunnelAt]!, DT, durationMs);
+  // A gate re-laid out by one MIN_GAP must still exceed the full-motion bound, or the world check could not see it.
+  // (Reduced motion flies the same distances in a sixth of the time, so its bound is looser.)
+  if (durationMs === DIVE_MS) expect(maxJumpWorld).toBeLessThan(MIN_GAP);
   return { maxJumpPx: MAX_JUMP_PX, flickerWindowMs: FLICKER_WINDOW_MS, maxJumpWorld };
 };
 
@@ -174,20 +183,28 @@ describe.each([[1280, 720], [375, 812]])("dive and surface at %ix%i", (w, h) => 
     expect(checkTrace(frames, optsFor(frames, 0, inTunnel))).toEqual([]);
   });
 
-  it("reduced motion: cuts only into and out of the overhead shot, poses still continuous in world space", () => {
+  it("reduced motion: one crossfaded cut in and one out; hops travel within the crossfade, continuous in world space", () => {
     const sim = createSim(w, h, true);
     const frames = sim.run(200);
+    const run = (ms: number): void => { frames.push(...sim.run(ms)); };
     sim.ctl.dive();
+    run(REDUCED_MS);
+    expect(sim.ctl.mode()).toBe("tunnel");
     // Dwell past the flicker window: the cut into the tunnel hides the mouth
     // behind the camera, and surfacing cuts back to a shot that shows it, so a
     // user reversing within the window does (correctly) see it re-appear.
-    frames.push(...sim.run(DIVE_MS + FLICKER_WINDOW_MS + 300));
+    run(FLICKER_WINDOW_MS + 300);
     const inTunnel = frames.length - 1;
-    expect(sim.ctl.mode()).toBe("tunnel");
     sim.ctl.surface();
-    frames.push(...sim.run(DIVE_MS + 300));
-    expect(frames.filter((f) => f.cut)).toHaveLength(4);
-    expect(checkTrace(frames, optsFor(frames, 0, inTunnel))).toEqual([]);
+    run(REDUCED_MS);
+    expect(sim.ctl.mode()).toBe("globe");
+    run(300);
+    // Two cuts (the dive's first frame and the surfacing's), each crossfaded for REDUCED_MS.
+    const onsets = frames.flatMap((f, i) => (f.cut && !frames[i - 1]?.cut ? [i] : []));
+    expect(onsets).toEqual([Math.round(200 / DT), inTunnel + 1]);
+    // (one frame of float slack at the end of each fade)
+    expect(frames.filter((f) => f.cut).length).toBeLessThanOrEqual(2 * (REDUCED_MS / DT + 1));
+    expect(checkTrace(frames, optsFor(frames, 0, inTunnel, REDUCED_MS))).toEqual([]);
   });
 });
 

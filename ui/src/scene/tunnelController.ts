@@ -7,7 +7,7 @@ import { fitDistance, FOV_DEG, springStep, type SpringState } from "./camera";
 import { ORIGIN_KEY, type PoseMap, type PoseSource } from "./globePoses";
 import { createTunnelPoseSource } from "./poses";
 import {
-  cameraAt, focusDepth, globeTransition, layerFades, modeOf, northUpSafe, reducedCameraAt, reducedShot, rigUp, rotateBetween, S_HOME, T_SURFACE,
+  cameraAt, DIVE_MS, focusDepth, globeTransition, layerFades, modeOf, northUpSafe, reducedCameraAt, REDUCED_MS, reducedShot, rigUp, rotateBetween, S_HOME, T_SURFACE,
   startTransition, stepTransition, viewTOf, type CameraPose, type LayerFades, type Transition, type ViewMode,
 } from "./transition";
 import { tunnelFrame, tunnelGates, type TunnelFrame, type TunnelGate } from "./tunnelLayout";
@@ -112,7 +112,7 @@ export const createTunnelController = (deps: TunnelControllerDeps): TunnelContro
       gates = tunnelGates(s);
     },
     advance: (dtMs) => {
-      if (!holdingForReturn()) transition = stepTransition(transition, dtMs);
+      if (!holdingForReturn()) transition = stepTransition(transition, dtMs, deps.reducedMotion ? REDUCED_MS : DIVE_MS);
       advanceCamera(dtMs);
       const key = shotKey();
       cut = key !== lastShot;
