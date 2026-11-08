@@ -1,7 +1,7 @@
 // Globe ↔ tunnel transition: a pure viewT timeline plus one continuous camera
 // curve (position, look-at, roll, FOV) as a function of viewT. Dive plays
 // viewT 0→1, Surface plays the same curves 1→0.
-import { add, cross, dot, lerp3, normalize, scale, slerpGreatCircle, sub, type Vec3 } from "../geo";
+import { add, cross, dot, latLonToVec3, lerp3, normalize, scale, sub, type Vec3 } from "../geo";
 import { FOV_DEG } from "./camera";
 import { easeInOutSine, hermite, smoothstep } from "./easing";
 import { helixLocal, toWorld, tunnelPoint, type TunnelFrame } from "./tunnelLayout";
@@ -31,6 +31,10 @@ const T_SKIM = 0.7;
 /** Altitude left at T_SKIM, as a fraction of the orbit altitude. */
 const SKIM_FRACTION = 0.2;
 const SNAP = 1e-9;
+/** Largest |y| of a view direction for which "north up" is well defined (≈ 76° latitude). */
+const NORTH_UP_LIMIT = 0.97;
+/** viewT over which a north-up dive hands its roll to the tunnel frame. */
+const ROLL_HANDOFF: readonly [number, number] = [0.4, 0.9];
 
 export type ViewMode = "globe" | "diving" | "tunnel" | "surfacing";
 export type ViewTarget = 0 | 1;
@@ -86,6 +90,12 @@ export interface CameraInput {
   readonly frame: TunnelFrame;
   /** Camera depth along the tunnel while in it. */
   readonly camS: number;
+  /**
+   * Keep the globe's north up through the flight (frame.v must then be north
+   * at the origin). Only valid when northUpSafe; otherwise the rig's roll is
+   * carried along the flight by minimal rotation.
+   */
+  readonly northUp: boolean;
 }
 
 export interface CameraPose {
@@ -121,6 +131,24 @@ const hermite3 = (keys: readonly Key[], m0: Vec3, mEnd: Vec3, t: number): Vec3 =
 
 const len = (v: Vec3): number => Math.hypot(...v);
 
+const DEG = 180 / Math.PI;
+const latLonOf = (d: Vec3): readonly [number, number] => [Math.asin(Math.max(-1, Math.min(1, d[1]))) * DEG, Math.atan2(-d[2], d[0]) * DEG];
+
+/** Direction between unit a and b, interpolating latitude and longitude (the shorter way round) so it never crosses a pole. */
+const lerpLatLon = (a: Vec3, b: Vec3, t: number): Vec3 => {
+  const [la, oa] = latLonOf(a);
+  const [lb, ob] = latLonOf(b);
+  const dLon = ((((ob - oa) % 360) + 540) % 360) - 180;
+  return latLonToVec3(la + (lb - la) * t, oa + dLon * t);
+};
+
+/**
+ * North-up roll is well defined over the whole dive when neither the rig nor
+ * the origin is near a pole: the swing interpolates latitude between them.
+ */
+export const northUpSafe = (rigPos: Vec3, origin: Vec3): boolean =>
+  Math.abs(normalize(rigPos)[1]) < NORTH_UP_LIMIT && Math.abs(normalize(origin)[1]) < NORTH_UP_LIMIT;
+
 /**
  * Flight keys: rise to the orbit distance while swinging over the origin
  * (looking at the globe centre, so the whole globe stays in frame), then
@@ -128,7 +156,7 @@ const len = (v: Vec3): number => Math.hypot(...v);
  */
 const flightKeys = (rigPos: Vec3, origin: Vec3, orbitR: number): Key[] => {
   const r = len(rigPos);
-  const swingDir = slerpGreatCircle(scale(rigPos, 1 / r), origin, 0.45);
+  const swingDir = lerpLatLon(scale(rigPos, 1 / r), origin, 0.45);
   return [
     { t: 0, p: rigPos },
     { t: T_SWING / 2, p: scale(swingDir, r + (orbitR - r) * 0.6) },
@@ -146,7 +174,7 @@ const tunnelDepth = (viewT: number, camS: number): number => {
 };
 
 /** Camera pose at viewT ∈ [0,1]: 0 is exactly the globe rig, 1 is the tunnel camera at camS. */
-export const cameraAt = (viewT: number, { rigPos, orbitR, frame, camS }: CameraInput): CameraPose => {
+export const cameraAt = (viewT: number, { rigPos, orbitR, frame, camS, northUp }: CameraInput): CameraPose => {
   const sCam = tunnelDepth(viewT, camS);
   const keys = flightKeys(rigPos, frame.origin, Math.max(orbitR, len(rigPos)));
   const first = keys[1]!;
@@ -161,9 +189,12 @@ export const cameraAt = (viewT: number, { rigPos, orbitR, frame, camS }: CameraI
   const look = toWorld(frame, [helix[0] * w, helix[1] * w, sLook]);
 
   // Roll: the rig's world-up convention near the globe, the tunnel frame's v
-  // (carried by the minimal rotation from n to the view direction) elsewhere.
+  // (carried by the minimal rotation from n to the view direction) in the
+  // tunnel. North-up keeps the rig's convention over the whole flight; the
+  // fallback hands over at once and carries the rig's roll instead.
   const fwd = normalize(sub(look, pos));
-  const blended = lerp3(rigUp(fwd), rotateBetween(frame.n, fwd, frame.v), smoothstep(0, 0.15, viewT));
+  const handoff = northUp ? smoothstep(ROLL_HANDOFF[0], ROLL_HANDOFF[1], viewT) : smoothstep(0, 0.15, viewT);
+  const blended = lerp3(rigUp(fwd), rotateBetween(frame.n, fwd, frame.v), handoff);
   const up = normalize(sub(blended, scale(fwd, dot(blended, fwd))));
   return { pos, look, up, fovDeg: FOV_DEG + (TUNNEL_FOV - FOV_DEG) * smoothstep(0.55, 1, viewT) };
 };

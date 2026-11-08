@@ -7,7 +7,7 @@ import { fitDistance, FOV_DEG, springStep, type SpringState } from "./camera";
 import { ORIGIN_KEY, type PoseMap, type PoseSource } from "./globePoses";
 import { createTunnelPoseSource } from "./poses";
 import {
-  cameraAt, focusDepth, globeTransition, layerFades, modeOf, reducedCameraAt, reducedShot, rigUp, rotateBetween, S_HOME,
+  cameraAt, focusDepth, globeTransition, layerFades, modeOf, northUpSafe, reducedCameraAt, reducedShot, rigUp, rotateBetween, S_HOME,
   startTransition, stepTransition, viewTOf, type CameraPose, type LayerFades, type Transition, type ViewMode,
 } from "./transition";
 import { tunnelFrame, tunnelGates, type TunnelFrame, type TunnelGate } from "./tunnelLayout";
@@ -51,14 +51,22 @@ export interface TunnelController {
   poses(): PoseMap;
 }
 
-const anchorFrame = (origin: Vec3, rigPos: Vec3): TunnelFrame => {
+interface Anchor {
+  readonly frame: TunnelFrame;
+  readonly northUp: boolean;
+}
+
+/** North stays up into the tunnel when it can; near a pole the rig's roll is carried down instead. */
+const anchorFrame = (origin: Vec3, rigPos: Vec3): Anchor => {
+  if (northUpSafe(rigPos, origin)) return { frame: tunnelFrame(origin, [0, 1, 0]), northUp: true };
   const f0 = normalize(scale(rigPos, -1));
-  return tunnelFrame(origin, rotateBetween(f0, scale(origin, -1), rigUp(f0)));
+  return { frame: tunnelFrame(origin, rotateBetween(f0, scale(origin, -1), rigUp(f0))), northUp: false };
 };
 
 export const createTunnelController = (deps: TunnelControllerDeps): TunnelController => {
   let transition: Transition = globeTransition;
   let frame: TunnelFrame | null = null;
+  let northUp = true;
   let state: TraceState | null = null;
   let gates: readonly TunnelGate[] = [];
   let poses: PoseMap = new Map();
@@ -103,8 +111,8 @@ export const createTunnelController = (deps: TunnelControllerDeps): TunnelContro
     camera: () => {
       const rigPos = deps.rigPos();
       const orbitR = fitDistance([Math.PI / 2], deps.aspect(), FOV_DEG);
-      if (!frame) return cameraAt(0, { rigPos, orbitR, frame: anchorFrame([0, 0, 1], rigPos), camS: S_HOME });
-      const input = { rigPos, orbitR, frame, camS: cam.x };
+      if (!frame) return cameraAt(0, { rigPos, orbitR, ...anchorFrame([0, 0, 1], rigPos), camS: S_HOME });
+      const input = { rigPos, orbitR, frame, northUp, camS: cam.x };
       return deps.reducedMotion ? reducedCameraAt(reducedShot(transition), input) : cameraAt(viewTOf(transition), input);
     },
     fades: () => layerFades(viewTOf(transition)),
@@ -115,7 +123,7 @@ export const createTunnelController = (deps: TunnelControllerDeps): TunnelContro
       if (mode() === "globe") {
         const origin = poses.get(ORIGIN_KEY)?.pos;
         if (!origin) return false;
-        frame = anchorFrame(origin, deps.rigPos());
+        ({ frame, northUp } = anchorFrame(origin, deps.rigPos()));
         cam = { x: S_HOME, v: 0 };
         camGoal = S_HOME;
       }

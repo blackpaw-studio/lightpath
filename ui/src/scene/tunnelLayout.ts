@@ -28,7 +28,7 @@ export interface TunnelGate extends GateLabel {
   readonly broken: boolean;
 }
 
-/** Local tunnel frame: u = screen right, v = screen up, n = inward normal (down the tunnel). */
+/** Local tunnel frame, right-handed (u × v = n): v = screen up, n = inward normal (down the tunnel). */
 export interface TunnelFrame {
   readonly origin: Vec3;
   readonly u: Vec3;
@@ -90,7 +90,7 @@ export const tunnelFrame = (origin: Vec3, upHint: Vec3): TunnelFrame => {
   const n = normalize(scale(origin, -1));
   const projected = sub(upHint, scale(n, dot(upHint, n)));
   const v = Math.hypot(...projected) < 1e-6 ? anyPerpendicular(n) : normalize(projected);
-  return { origin, u: cross(n, v), v, n };
+  return { origin, u: cross(v, n), v, n };
 };
 
 export const toWorld = (f: TunnelFrame, [x, y, z]: Vec3): Vec3 =>
@@ -98,3 +98,9 @@ export const toWorld = (f: TunnelFrame, [x, y, z]: Vec3): Vec3 =>
 
 /** World position of depth s on the tunnel's helix. */
 export const tunnelPoint = (f: TunnelFrame, s: number): Vec3 => toWorld(f, helixLocal(s));
+
+/** Unit tangent of the helix at depth s, in world space. */
+export const tunnelTangent = (f: TunnelFrame, s: number): Vec3 => {
+  const e = 1e-3;
+  return normalize(sub(tunnelPoint(f, s + e), tunnelPoint(f, s - e)));
+};

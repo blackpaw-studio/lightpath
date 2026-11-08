@@ -3,7 +3,7 @@ import { angularDistance, dot, latLonToVec3, normalize, scale, sub, type Vec3 } 
 import { FOV_DEG } from "./camera";
 import {
   cameraAt, DIVE_MS, easeInOutSine, focusDepth, globeTransition, layerFades, modeOf, rigUp, rotateBetween,
-  reducedShot, S_HOME, startTransition, stepTransition, T_SURFACE, TUNNEL_FOV, viewTOf, type CameraInput, type Transition,
+  northUpSafe, reducedShot, S_HOME, startTransition, stepTransition, T_SURFACE, T_SWING, TUNNEL_FOV, viewTOf, type CameraInput, type Transition,
 } from "./transition";
 import { tunnelFrame, tunnelPoint } from "./tunnelLayout";
 
@@ -82,7 +82,7 @@ describe("cameraAt", () => {
   const rigPos: Vec3 = scale(normalize([0.2, 0.6, 0.8]), 3.4);
   const f0 = normalize(scale(rigPos, -1));
   const frame = tunnelFrame(origin, rotateBetween(f0, scale(origin, -1), rigUp(f0)));
-  const input: CameraInput = { rigPos, orbitR: 3.4, frame, camS: S_HOME };
+  const input: CameraInput = { rigPos, orbitR: 3.4, frame, camS: S_HOME, northUp: false };
 
   it("starts exactly at the globe rig pose", () => {
     const c = cameraAt(0, input);
@@ -106,7 +106,7 @@ describe("cameraAt", () => {
   // Rig 75° away from the origin and further out: the longest swing the globe rig can produce for a framed route.
   const farRig: Vec3 = scale(latLonToVec3(10, -150), 4.5);
   const farFrame = tunnelFrame(origin, rotateBetween(normalize(scale(farRig, -1)), scale(origin, -1), rigUp(normalize(scale(farRig, -1)))));
-  it.each([["near rig", input], ["far rig", { rigPos: farRig, orbitR: 3.4, frame: farFrame, camS: S_HOME }]] as const)(
+  it.each([["near rig", input], ["far rig", { rigPos: farRig, orbitR: 3.4, frame: farFrame, camS: S_HOME, northUp: false }]] as const)(
     "is continuous (%s): 1/600 viewT steps move position, view direction and roll by small bounded amounts", (_, inp) => {
     const poses = Array.from({ length: 601 }, (_, i) => cameraAt(i / 600, inp));
     const steps = poses.slice(1).map((c, i) => {
@@ -123,7 +123,7 @@ describe("cameraAt", () => {
   });
 
   it("keeps the camera outside the globe until the surface crossing", () => {
-    for (const inp of [input, { rigPos: farRig, orbitR: 3.4, frame: farFrame, camS: S_HOME }]) {
+    for (const inp of [input, { rigPos: farRig, orbitR: 3.4, frame: farFrame, camS: S_HOME, northUp: false }]) {
       for (let i = 0; i < 100; i++) {
         const v = (i / 100) * T_SURFACE;
         expect(Math.hypot(...cameraAt(v, inp).pos)).toBeGreaterThan(0.999);
@@ -134,6 +134,38 @@ describe("cameraAt", () => {
   it("follows the helix to a focused gate once in the tunnel", () => {
     const c = cameraAt(1, { ...input, camS: focusDepth(4.2) });
     near(c.pos, tunnelPoint(frame, focusDepth(4.2)));
+  });
+});
+
+describe("north-up roll", () => {
+  const origin = latLonToVec3(40.68, -73.94);
+  const n = scale(origin, -1);
+  const overAsia: Vec3 = scale(latLonToVec3(45, 100), 3.4);
+
+  it("is safe for a mid-latitude origin, but not near a pole or when the swing crosses one", () => {
+    expect(northUpSafe(overAsia, origin)).toBe(true);
+    expect(northUpSafe(overAsia, latLonToVec3(80, 15))).toBe(false);
+    expect(northUpSafe(scale(latLonToVec3(85, 0), 3.4), origin)).toBe(false);
+  });
+
+  it("swings around the globe rather than over a pole, even to the far side", () => {
+    const from = scale(latLonToVec3(48, 100), 3.4);
+    const to = latLonToVec3(48, -80);
+    const input: CameraInput = { rigPos: from, orbitR: 3.4, frame: tunnelFrame(to, [0, 1, 0]), camS: S_HOME, northUp: true };
+    const path = Array.from({ length: 101 }, (_, i) => cameraAt((i / 100) * T_SWING, input).pos);
+    expect(Math.max(...path.map((p) => Math.abs(normalize(p)[1])))).toBeLessThan(0.9);
+    expect(Math.min(...path.map((p) => Math.hypot(...p)))).toBeGreaterThan(2.5);
+  });
+
+  it("keeps the globe's north up over the origin, however far the rig swung to get there", () => {
+    const frame = tunnelFrame(origin, [0, 1, 0]);
+    const input: CameraInput = { rigPos: overAsia, orbitR: 3.4, frame, camS: S_HOME, northUp: true };
+    const north = rigUp(n);
+    for (const v of [T_SWING, 0.6, T_SURFACE, 1]) {
+      expect(dot(cameraAt(v, input).up, north)).toBeGreaterThan(0.98);
+    }
+    const steps = Array.from({ length: 601 }, (_, i) => cameraAt(i / 600, input).up);
+    expect(Math.max(...steps.slice(1).map((u, i) => angularDistance(u, steps[i]!)))).toBeLessThan((1.5 * Math.PI) / 180);
   });
 });
 

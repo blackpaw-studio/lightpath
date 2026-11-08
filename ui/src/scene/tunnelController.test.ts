@@ -13,26 +13,11 @@ import { createGlobePoseSource, ORIGIN_KEY } from "./globePoses";
 import { globeLayout } from "./layout";
 import { DIVE_MS, S_HOME, focusDepth, type CameraPose } from "./transition";
 import { createTunnelController, type TunnelController } from "./tunnelController";
-import { FLIGHT } from "./poses";
+import { FLICKER_WINDOW_MS, MAX_JUMP_PX, worldJumpBound } from "./motionBudget";
 import { MIN_GAP, tunnelPoint } from "./tunnelLayout";
 
 const DT = 1000 / 60;
 const doneState: TraceState = sampleTimeline.reduce((s, [, m]) => reduce(s, m), initialState);
-
-/** Plan §S3.2: 48 px per frame at 1280 px width. */
-const MAX_JUMP_PX = 48;
-
-const dist = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-
-/**
- * Peak legitimate per-frame world move for this route: the longest hop flight
- * (globe position → gate) at the steepest point of the eased flight (smoothstep
- * slope 1.5/window × sine-ease slope π/2 × one frame), plus 10 %.
- */
-const worldBound = (globe: Frame, tunnel: Frame): number => {
-  const span = Math.max(...Object.entries(globe.entities).map(([k, e]) => dist(e.world!, tunnel.entities[k]!.world!)));
-  return span * (1.5 / (FLIGHT[1] - FLIGHT[0])) * (Math.PI / 2) * (DT / DIVE_MS) * 1.1;
-};
 
 interface Sim {
   readonly ctl: TunnelController;
@@ -76,10 +61,10 @@ const createSim = (w: number, h: number, reducedMotion: boolean, state: TraceSta
 
 /** Trace options with the world bound measured on this simulation's own globe and tunnel frames. */
 const optsFor = (frames: readonly Frame[], globeAt: number, tunnelAt: number): TraceOptions => {
-  const maxJumpWorld = worldBound(frames[globeAt]!, frames[tunnelAt]!);
+  const maxJumpWorld = worldJumpBound(frames[globeAt]!, frames[tunnelAt]!);
   // A gate re-laid out by one MIN_GAP must still exceed the bound, or the world check could not see it.
   expect(maxJumpWorld).toBeLessThan(MIN_GAP);
-  return { maxJumpPx: MAX_JUMP_PX, flickerWindowMs: 1000, maxJumpWorld };
+  return { maxJumpPx: MAX_JUMP_PX, flickerWindowMs: FLICKER_WINDOW_MS, maxJumpWorld };
 };
 
 describe.each([[1280, 720], [375, 812]])("dive and surface at %ix%i", (w, h) => {

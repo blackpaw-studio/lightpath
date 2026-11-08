@@ -87,6 +87,8 @@ describe("helix and tunnel frame", () => {
     expect(dot(f.u, f.v)).toBeCloseTo(0, 12);
     expect(dot(f.v, f.n)).toBeCloseTo(0, 12);
     expect(dot(f.u, f.n)).toBeCloseTo(0, 12);
+    const uxv: Vec3 = [f.u[1] * f.v[2] - f.u[2] * f.v[1], f.u[2] * f.v[0] - f.u[0] * f.v[2], f.u[0] * f.v[1] - f.u[1] * f.v[0]];
+    expect(dot(uxv, f.n)).toBeCloseTo(1, 12); // right-handed, so the tube's matrix never mirrors its winding
   });
   it("keeps v as close to the up hint as possible", () => {
     const f = tunnelFrame([1, 0, 0], [0.3, 1, 0]);
