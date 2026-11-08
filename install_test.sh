@@ -132,7 +132,7 @@ done
 
 # traceroute warning when missing: hide it with a minimal PATH of required tools.
 mkdir -p "$TMP/minbin"
-for t in sh tar curl wget mkdir cp chmod mv rm mktemp grep awk cut sed shasum sha256sum id dirname tr head cat install ln; do
+for t in sh tar gzip curl wget mkdir cp chmod mv rm mktemp grep awk cut sed shasum sha256sum id dirname tr head cat install ln; do
   p=$(command -v "$t" 2>/dev/null) && [ -x "$p" ] && ln -sf "$p" "$TMP/minbin/$t"
 done
 cp "$TMP/stub/uname" "$TMP/minbin/uname"
