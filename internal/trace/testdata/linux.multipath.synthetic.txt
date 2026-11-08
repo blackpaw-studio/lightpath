@@ -1,0 +1,7 @@
+# synthetic: Butskoy (Linux) multipath on one line, leading star, full timeout, reached
+traceroute to example.com (93.184.216.34), 30 hops max, 60 byte packets
+ 1  192.168.1.1  0.512 ms  0.488 ms  0.470 ms
+ 2  10.1.1.1  3.1 ms  10.1.1.2  3.4 ms  10.1.1.1  3.0 ms
+ 3  * 172.16.0.9  8.2 ms  8.0 ms
+ 4  * * *
+ 5  93.184.216.34  11.9 ms  11.8 ms  12.0 ms

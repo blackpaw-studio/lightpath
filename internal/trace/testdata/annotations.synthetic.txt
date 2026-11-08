@@ -1,0 +1,7 @@
+# synthetic: probe annotations (!H !N !X !<n> !P !S !A !F)
+traceroute to 10.0.0.9 (10.0.0.9), 30 hops max, 60 byte packets
+ 1  10.0.0.1  0.5 ms  0.4 ms  0.4 ms
+ 2  10.0.0.2  1.0 ms !H  1.1 ms !H  1.0 ms !H
+ 3  10.0.0.3  1.0 ms !N  * *
+ 4  10.0.0.4  2.0 ms !X  2.0 ms !<10>  2.0 ms !P
+ 5  10.0.0.5  3.0 ms !S  3.0 ms !A  3.0 ms !F

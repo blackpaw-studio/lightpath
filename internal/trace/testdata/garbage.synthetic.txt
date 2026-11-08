@@ -1,0 +1,11 @@
+# synthetic: noise the parser must skip without stopping
+traceroute: Warning: example.com has multiple addresses; using 93.184.216.34
+traceroute to example.com (93.184.216.34), 30 hops max, 40 byte packets
+
+ 1  192.168.1.1  0.5 ms  0.4 ms  0.4 ms
+traceroute: sendto: No route to host
+ 2 traceroute: wrote example.com 52 chars, ret=-1
+12abc  not a hop
+ 7
+    10.0.0.7  1.0 ms
+ 3  10.0.0.3  1.0 ms  1.1 ms  1.2 ms
