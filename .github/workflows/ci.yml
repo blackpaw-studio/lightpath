@@ -34,3 +34,33 @@ jobs:
       - run: npx tsc --noEmit
       - run: npx eslint .
       - run: npx vitest run
+      - run: npm run build
+  install-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh install_test.sh
+      - run: shellcheck install_test.sh ui/public/install.sh
+  e2e:
+    # Playwright specs land with M3. --pass-with-no-tests keeps this job green
+    # while ui/e2e has no specs; remove the flag once specs exist.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: go build -o lightpath ./cmd/lightpath
+      - run: npx playwright install --with-deps
+        working-directory: ui
+      - run: npx playwright test --pass-with-no-tests
+        working-directory: ui
