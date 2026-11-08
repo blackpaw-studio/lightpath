@@ -58,6 +58,8 @@ export const createBloom = (renderer: WebGLRenderer, scene: Scene, camera: Camer
     },
     render: () => composer.render(),
     setSize: (w, h) => {
+      // The composer caches its own pixel ratio; a DPR change (moving between displays) must reach it.
+      composer.setPixelRatio(renderer.getPixelRatio());
       composer.setSize(w, h);
       full = renderer.getDrawingBufferSize(new Vector2());
       applied = null;
