@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "recordedAt": "2026-11-08T21:00:00Z",
+  "events": [
+    {"t": 0, "event": {"type":"trace.started","target":"cdn.example.net","resolvedIp":"104.16.1.1","origin":{"publicIp":"192.0.2.10","lat":40.68,"lon":-73.94,"city":"Brooklyn","asn":701,"org":"UUNET - Verizon Business, US"}}},
+    {"t": 200, "event": {"type":"hop","ttl":1,"probes":[{"ip":"10.0.4.1","rttMs":1.1},{"ip":"10.0.4.1","rttMs":1.0},{"ip":"10.0.4.1","rttMs":1.2}],"ip":"10.0.4.1","host":null,"asn":null,"org":null,"lat":40.68,"lon":-73.94,"city":"Brooklyn","geoSource":"local","annotations":[]}},
+    {"t": 450, "event": {"type":"hop","ttl":2,"probes":[{"ip":"96.250.220.1","rttMs":8.4},{"ip":"96.250.220.1","rttMs":9.1},{"ip":"96.250.220.1","rttMs":8.7}],"ip":"96.250.220.1","host":null,"asn":701,"org":"UUNET - Verizon Business, US","lat":40.71,"lon":-74.0,"city":"New York","geoSource":"api","annotations":[]}},
+    {"t": 700, "event": {"type":"hop","ttl":3,"probes":[{"ip":"100.41.23.64","rttMs":9.8},{"ip":"100.41.23.64","rttMs":10.2},{"ip":"100.41.23.64","rttMs":9.9}],"ip":"100.41.23.64","host":null,"asn":701,"org":"UUNET - Verizon Business, US","lat":42.36,"lon":-71.06,"city":"Boston","geoSource":"api","annotations":[]}},
+    {"t": 950, "event": {"type":"hop","ttl":4,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 1150, "event": {"type":"hop","ttl":5,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 1350, "event": {"type":"hop","ttl":6,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 1700, "event": {"type":"hop","ttl":7,"probes":[{"ip":"152.193.5.194","rttMs":11.6},{"ip":"152.193.5.194","rttMs":12.0},{"ip":"152.193.5.194","rttMs":11.8}],"ip":"152.193.5.194","host":null,"asn":701,"org":"UUNET - Verizon Business, US","lat":40.73,"lon":-74.17,"city":"Newark","geoSource":"api","annotations":[]}},
+    {"t": 1950, "event": {"type":"hop","ttl":8,"probes":[{"ip":"162.158.61.101","rttMs":12.9},{"ip":"162.158.61.101","rttMs":13.4},{"ip":"162.158.61.101","rttMs":13.1}],"ip":"162.158.61.101","host":null,"asn":13335,"org":"CLOUDFLARENET - Cloudflare, Inc., US","lat":40.73,"lon":-74.17,"city":"Newark","geoSource":"api","annotations":[]}},
+    {"t": 2200, "event": {"type":"hop","ttl":9,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 2450, "event": {"type":"hop","ttl":10,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 2700, "event": {"type":"hop","ttl":11,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 2950, "event": {"type":"hop","ttl":12,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 3200, "event": {"type":"hop","ttl":13,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 3600, "event": {"type":"trace.done","reached":false,"reason":"quiet","destination":{"ip":"104.16.1.1","reachable":true,"port":443,"rttMs":9.2,"host":null,"asn":13335,"org":"CLOUDFLARENET - Cloudflare, Inc., US","lat":37.77,"lon":-122.42,"city":"San Francisco","geoSource":"api"}}}
+  ]
+}

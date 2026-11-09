@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "recordedAt": "2026-11-08T21:00:00Z",
+  "events": [
+    {"t": 0, "event": {"type":"trace.started","target":"74.101.2.152","resolvedIp":"74.101.2.152","origin":{"publicIp":"192.0.2.10","lat":40.68,"lon":-73.94,"city":"Brooklyn","asn":701,"org":"UUNET - Verizon Business, US"}}},
+    {"t": 200, "event": {"type":"hop","ttl":1,"probes":[{"ip":"10.0.4.1","rttMs":1.1},{"ip":"10.0.4.1","rttMs":1.0},{"ip":"10.0.4.1","rttMs":1.2}],"ip":"10.0.4.1","host":null,"asn":null,"org":null,"lat":40.68,"lon":-73.94,"city":"Brooklyn","geoSource":"local","annotations":[]}},
+    {"t": 500, "event": {"type":"hop","ttl":2,"probes":[{"ip":"96.250.220.1","rttMs":8.4},{"ip":"96.250.220.1","rttMs":9.1},{"ip":"96.250.220.1","rttMs":8.7}],"ip":"96.250.220.1","host":null,"asn":701,"org":"UUNET - Verizon Business, US","lat":40.71,"lon":-74.0,"city":"New York","geoSource":"api","annotations":[]}},
+    {"t": 800, "event": {"type":"hop","ttl":3,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 1100, "event": {"type":"hop","ttl":4,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 1400, "event": {"type":"hop","ttl":5,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 1700, "event": {"type":"hop","ttl":6,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 2000, "event": {"type":"hop","ttl":7,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
+    {"t": 2300, "event": {"type":"trace.done","reached":false,"reason":"quiet","destination":{"ip":"74.101.2.152","reachable":false,"port":null,"rttMs":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated"}}}
+  ]
+}
