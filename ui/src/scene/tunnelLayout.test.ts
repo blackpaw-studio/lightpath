@@ -130,7 +130,7 @@ describe("tunnelGates destination", () => {
   });
   it("ends with an estimated Destination gate named by network and delay", () => {
     const gates = tunnelGates(finished());
-    expect(gates.at(-1)).toMatchObject({ ttl: 3, title: "Destination", detail: "Cloudflare · 18.4 ms", estimated: true, broken: false });
+    expect(gates.at(-1)).toMatchObject({ ttl: 3, title: "Destination", detail: "Cloudflare · 18 ms", estimated: true, broken: false });
     expect(gates.at(-1)!.s).toBeGreaterThan(gates.at(-2)!.s);
   });
   it("marks real hops as not estimated", () => {

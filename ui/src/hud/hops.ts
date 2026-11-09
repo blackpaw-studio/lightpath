@@ -170,6 +170,7 @@ export const destinationRowEl = (doc: Document, row: DestinationRow, expanded: b
     () => { if (row.ttl !== null) h.onFocus(row.ttl); }, h,
   );
   if (row.ttl !== null) li.dataset.ttl = String(row.ttl);
+  li.dataset.ttls = row.ttls.join(" ");
   return li;
 };
 

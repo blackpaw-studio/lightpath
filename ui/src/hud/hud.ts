@@ -106,7 +106,7 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
     list
       .querySelectorAll<HTMLElement>(".hop")
       .forEach((r) => {
-        const ttls = r.dataset.ttl !== undefined ? [r.dataset.ttl] : (r.dataset.ttls ?? "").split(" ");
+        const ttls = [...(r.dataset.ttl !== undefined ? [r.dataset.ttl] : []), ...(r.dataset.ttls ?? "").split(" ")];
         r.classList.toggle("focus", focus !== null && ttls.includes(String(focus)));
       });
 

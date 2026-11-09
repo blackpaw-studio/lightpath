@@ -222,7 +222,7 @@ describe("quietRunTitle", () => {
   it.each<[string, number, Hop | null, Hop | null, string]>([
     ["same network", 4, verizon(2), verizon(7), "4 routers inside Verizon's network"],
     ["different networks", 3, verizon(2), cloudflare(6), "3 routers between Verizon and Cloudflare"],
-    ["names ending in s take a bare apostrophe", 2, hop(1, { asn: 3356, org: "LUMEN" }), hop(4, { asn: 3356 }), "2 routers inside Lumen's network"],
+    ["a known name ending in s (Lumen) takes a bare apostrophe", 2, hop(1, { asn: 3356, org: "LUMEN" }), hop(4, { asn: 3356 }), "2 routers inside Lumen's network"],
     ["a name that really ends in s", 2, hop(1, { asn: 64500, org: "Acme Hosts" }), hop(4, { asn: 64500, org: "Acme Hosts" }), "2 routers inside Acme Hosts' network"],
     ["singular, same network", 1, verizon(2), verizon(4), "1 router inside Verizon's network"],
     ["singular, different networks", 1, verizon(2), cloudflare(4), "1 router between Verizon and Cloudflare"],
@@ -255,7 +255,7 @@ describe("buildRows", () => {
     const s = finished([verizon(1), verizon(2), quiet(3), quiet(4), quiet(5), quiet(6), quiet(7)], { endReason: "quiet", destination: reachable });
     const rows = buildRows(s);
     expect(rows.map((r) => r.kind)).toEqual(["hop", "hop", "destination"]);
-    expect(rows.at(-1)).toMatchObject({ kind: "destination", key: "dest", destination: reachable, ttl: 8 });
+    expect(rows.at(-1)).toMatchObject({ kind: "destination", key: "dest", destination: reachable, ttl: 8, ttls: [3, 4, 5, 6, 7] });
   });
   it("replaces it with a closing row naming the last network when the destination does not answer", () => {
     const s = finished([hop(1, { ip: "192.168.1.1" }), verizon(2), quiet(3), quiet(4), quiet(5), quiet(6), quiet(7)], { endReason: "quiet", destination: unreachable });

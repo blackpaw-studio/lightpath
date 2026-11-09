@@ -9,7 +9,11 @@ export type Row =
   /** A run of silent hops. `title` names it by its neighbours (see quietRunTitle); absent means the generic copy. */
   | { readonly kind: "quiet"; readonly key: string; readonly ttls: readonly number[]; readonly title?: string }
   /** The end of a quiet finish whose destination answers over TCP. `ttl` is its scene entry, null when the scene draws none. */
-  | { readonly kind: "destination"; readonly key: string; readonly destination: Destination; readonly ttl: number | null }
+  | {
+      readonly kind: "destination"; readonly key: string; readonly destination: Destination; readonly ttl: number | null;
+      /** The silent hops this row replaced; selecting any of them in the scene highlights it. */
+      readonly ttls: readonly number[];
+    }
   /** The end of a quiet finish whose destination does not answer: the trailing silent hops, closed off. */
   | {
       readonly kind: "end"; readonly key: string; readonly ttls: readonly number[]; readonly pastLabel: string | null;
@@ -130,7 +134,8 @@ export const buildRows = (state: TraceState): readonly Row[] => {
   const dest = state.destination;
   if (dest?.reachable) {
     const ttl = sceneDestination(state) === null ? null : destinationTtl(state.hops);
-    return [...body, { kind: "destination", key: "dest", destination: dest, ttl }];
+    const ttls = trailing?.kind === "quiet" ? trailing.ttls : [];
+    return [...body, { kind: "destination", key: "dest", destination: dest, ttl, ttls }];
   }
   const past = lastResponding(state.hops);
   return [

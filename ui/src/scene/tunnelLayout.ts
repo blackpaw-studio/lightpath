@@ -5,6 +5,7 @@ import { destinationTtl, sceneDestination } from "../destination";
 import { add, cross, dot, normalize, scale, sub, type Vec3 } from "../geo";
 import type { Hop } from "../protocol";
 import { shortNetworkName } from "../hud/network";
+import { delayText } from "../hud/rows";
 import type { TraceState } from "../reducer";
 
 /** Smallest gap between consecutive gates (world units). */
@@ -84,7 +85,7 @@ export const tunnelGates = (state: TraceState): TunnelGate[] => {
   });
   if (!dest) return hopGates;
   const net = shortNetworkName(dest.org, dest.asn);
-  const delay = dest.rttMs === null ? null : `${dest.rttMs.toFixed(1)} ms`;
+  const delay = dest.rttMs === null ? null : delayText(dest.rttMs);
   return [...hopGates, {
     ttl: destinationTtl(state.hops), title: "Destination", detail: [net, delay].filter((x) => x !== null).join(" · "),
     s: s[hopGates.length]!, broken: false, estimated: true, color: dest.rttMs === null ? NO_RTT_COLOR : rttColor(dest.rttMs),

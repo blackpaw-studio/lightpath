@@ -179,7 +179,7 @@ const dest: Destination = {
   lat: 40.7, lon: -74, city: "New York", geoSource: "api",
 };
 const destRow = (d: Destination, ttl: number | null, hs = handlers()) =>
-  destinationRowEl(document, { kind: "destination", key: "dest", destination: d, ttl }, false, hs);
+  destinationRowEl(document, { kind: "destination", key: "dest", destination: d, ttl, ttls: [5, 6, 7] }, false, hs);
 
 describe("destination row", () => {
   it("reads Destination · network · place · delay with the direct-answer note", () => {
@@ -204,6 +204,10 @@ describe("destination row", () => {
     expect(el.dataset.ttl).toBe("8");
     head(el).click();
     expect(hs.onFocus).toHaveBeenCalledWith(8);
+  });
+  it("carries the silent hops it replaced, so selecting those scene nodes can highlight it", () => {
+    expect(destRow(dest, 8).dataset.ttls).toBe("5 6 7");
+    expect(destRow(dest, null).dataset.ttls).toBe("5 6 7");
   });
   it("only toggles when the scene has no entry for it", () => {
     const hs = handlers();
@@ -239,6 +243,6 @@ describe("closing row", () => {
   it("rowEl dispatches every row kind", () => {
     const hs = handlers();
     expect(rowEl(document, { kind: "end", key: "end", ttls: [], pastLabel: "x", destination: null }, false, hs).dataset.key).toBe("end");
-    expect(rowEl(document, { kind: "destination", key: "dest", destination: dest, ttl: 2 }, false, hs).dataset.key).toBe("dest");
+    expect(rowEl(document, { kind: "destination", key: "dest", destination: dest, ttl: 2, ttls: [] }, false, hs).dataset.key).toBe("dest");
   });
 });
