@@ -3,6 +3,7 @@ import { meanRtt, rttColor } from "../color";
 import { delayText, hasSolidLocation, medianRtt, placeLabel, type Row } from "./rows";
 
 export const QUIET_SUBTITLE = "Many networks hide their routers; the path continues.";
+export const STOPPED_SUBTITLE = "The trace stopped here; the destination didn't answer.";
 
 export interface RowHandlers {
   /** Called after a row flips, so the HUD can keep it open across re-renders. */
@@ -67,6 +68,11 @@ const assemble = (
   details.append(detailEl);
   head.setAttribute("aria-controls", details.id);
 
+  // The reveal animation belongs to a user toggle, not to a render: rows rebuilt while hops stream stay still.
+  const clearOpening = (e: Event): void => {
+    if (e.target === details) li.classList.remove("opening");
+  };
+  li.addEventListener("animationend", clearOpening);
   const set = (open: boolean): void => {
     head.setAttribute("aria-expanded", String(open));
     details.hidden = !open;
@@ -76,6 +82,7 @@ const assemble = (
   const toggle = (): void => {
     const open = head.getAttribute("aria-expanded") !== "true";
     set(open);
+    li.classList.toggle("opening", open);
     h.onToggle(key, open);
     afterToggle();
   };
@@ -113,14 +120,16 @@ export const hopRowEl = (doc: Document, row: HopRow, expanded: boolean, h: RowHa
 };
 
 /** A run of silent hops: one quiet line, expandable to the hop numbers. Never moves the scene. */
-export const quietRowEl = (doc: Document, row: QuietRow, expanded: boolean, h: RowHandlers): HTMLElement => {
+export const quietRowEl = (
+  doc: Document, row: QuietRow, expanded: boolean, h: RowHandlers, stopped = false,
+): HTMLElement => {
   const n = row.ttls.length;
   const connector = el(doc, "span", "connector");
   connector.setAttribute("aria-hidden", "true");
   const text = el(doc, "span", "quiet-text");
   text.append(
     el(doc, "span", "place", `${n} ${n === 1 ? "router" : "routers"} stayed quiet`),
-    el(doc, "span", "subtitle", QUIET_SUBTITLE),
+    el(doc, "span", "subtitle", stopped ? STOPPED_SUBTITLE : QUIET_SUBTITLE),
   );
   const li = assemble(
     doc, row.key, "hop quiet", [connector, text], detailList(doc, [["Hops", row.ttls.join(", ")]]),
@@ -130,5 +139,5 @@ export const quietRowEl = (doc: Document, row: QuietRow, expanded: boolean, h: R
   return li;
 };
 
-export const rowEl = (doc: Document, row: Row, expanded: boolean, h: RowHandlers): HTMLElement =>
-  row.kind === "hop" ? hopRowEl(doc, row, expanded, h) : quietRowEl(doc, row, expanded, h);
+export const rowEl = (doc: Document, row: Row, expanded: boolean, h: RowHandlers, stopped = false): HTMLElement =>
+  row.kind === "hop" ? hopRowEl(doc, row, expanded, h) : quietRowEl(doc, row, expanded, h, stopped);

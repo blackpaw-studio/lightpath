@@ -3,7 +3,7 @@ import type { ConnState } from "../conn";
 import type { TraceState } from "../reducer";
 import { rowEl, type RowHandlers } from "./hops";
 import { installPanel } from "./install";
-import { groupHops, isIpLiteral, summaryLine } from "./rows";
+import { groupHops, isIpLiteral, summaryLine, trailingStopKey } from "./rows";
 import { sparkline } from "./sparkline";
 
 export interface HudHandlers {
@@ -130,15 +130,16 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
   /** Rebuilds the list but keeps the scroll offset and keyboard focus the user had. */
   const renderRows = (state: TraceState): void => {
     const rows = groupHops(state.hops);
+    const stopKey = trailingStopKey(state, rows);
     expanded = new Set(rows.map((r) => r.key).filter((k) => expanded.has(k)));
     const active = doc.activeElement;
     const focusedKey = active && list.contains(active) ? active.closest<HTMLElement>("li")?.dataset.key : undefined;
     const scrollTop = list.scrollTop;
-    list.replaceChildren(...rows.map((r) => rowEl(doc, r, expanded.has(r.key), rowHandlers)));
+    list.replaceChildren(...rows.map((r) => rowEl(doc, r, expanded.has(r.key), rowHandlers, r.key === stopKey)));
     list.scrollTop = scrollTop;
     if (focusedKey !== undefined) {
       [...list.children].find((li) => (li as HTMLElement).dataset.key === focusedKey)
-        ?.querySelector<HTMLElement>('[role="button"]')?.focus();
+        ?.querySelector<HTMLElement>('[role="button"]')?.focus({ preventScroll: true });
     }
   };
 

@@ -30,6 +30,12 @@ const parseIpv4 = (s: string): readonly number[] | null => {
 export const isIpLiteral = (s: string): boolean =>
   parseIpv4(s) !== null || (/^[0-9a-f:.]+$/i.test(s) && (s.match(/:/g)?.length ?? 0) >= 2);
 
+/** 100.64.0.0/10: shared address space ISPs use inside their own networks. */
+export const isCgnat = (ip: string | null): boolean => {
+  const v4 = ip === null ? null : parseIpv4(ip);
+  return v4 !== null && v4[0] === 100 && v4[1]! >= 64 && v4[1]! <= 127;
+};
+
 /** RFC1918, CGNAT, link-local, loopback, IPv6 ULA and link-local. */
 export const isPrivateIp = (ip: string | null): boolean => {
   if (ip === null) return false;
@@ -52,7 +58,8 @@ export const isQuiet = (hop: Hop): boolean => hop.probes.every((p) => p.rttMs ==
 /** Primary row text: place and short network, or a plain-language name for local hops. */
 export const placeLabel = (hop: Hop): string => {
   const place = hop.city === null ? null : (hasSolidLocation(hop) ? "" : "≈ ") + hop.city;
-  if (isPrivateIp(hop.ip)) {
+  // CGNAT past the first hop is the ISP's own gear: label it by network/place like any public hop.
+  if (isPrivateIp(hop.ip) && !(hop.ttl >= 2 && isCgnat(hop.ip))) {
     if (hop.ttl !== 1) return "Local network";
     return place === null ? "Your router" : "Your router · " + place;
   }
@@ -65,7 +72,7 @@ export const groupHops = (hops: readonly Hop[]): readonly Row[] =>
   hops.reduce<readonly Row[]>((rows, hop) => {
     if (!isQuiet(hop)) return [...rows, { kind: "hop", key: "h" + hop.ttl, hop }];
     const last = rows.at(-1);
-    if (last?.kind === "quiet") {
+    if (last?.kind === "quiet" && last.ttls.at(-1) === hop.ttl - 1) {
       return [...rows.slice(0, -1), { ...last, ttls: [...last.ttls, hop.ttl] }];
     }
     return [...rows, { kind: "quiet", key: "q" + hop.ttl, ttls: [hop.ttl] }];
@@ -73,21 +80,30 @@ export const groupHops = (hops: readonly Hop[]): readonly Row[] =>
 
 const plural = (n: number, one: string, many: string): string => n + " " + (n === 1 ? one : many);
 
-/** "N hops · M networks · X ms" (unknown parts omitted). */
+/** Key of the quiet run that ends a finished trace which never reached its destination, else null. */
+export const trailingStopKey = (state: TraceState, rows: readonly Row[]): string | null => {
+  const last = rows.at(-1);
+  return state.status === "done" && state.reached === false && last?.kind === "quiet" ? last.key : null;
+};
+
+/** "N hops · M networks · X ms" (unknown parts omitted). An unreached trace stops counting at its last reply and has no final delay. */
 export const summaryLine = (state: TraceState): string => {
   const responding = state.hops.filter((h) => !isQuiet(h));
+  const last = responding.at(-1);
+  const reached = state.reached === true;
+  const hopCount = reached || !last ? state.hops.length : state.hops.indexOf(last) + 1;
+  // Distinct networks by display name (AS7922 and AS33651 are both Comcast); unnamed ones by AS number.
   const networks = new Set(
     responding
-      .filter((h) => !isPrivateIp(h.ip))
+      .filter((h) => !isPrivateIp(h.ip) || (h.ttl >= 2 && isCgnat(h.ip)))
       .flatMap((h) => {
-        const id = h.asn !== null ? "AS" + h.asn : shortNetworkName(h.org, h.asn);
+        const id = shortNetworkName(h.org, h.asn) ?? (h.asn === null ? null : "AS" + h.asn);
         return id === null ? [] : [id];
       }),
   );
-  const last = responding.at(-1);
-  const delay = last ? medianRtt(last.probes) : null;
+  const delay = reached && last ? medianRtt(last.probes) : null;
   return [
-    plural(state.hops.length, "hop", "hops"),
+    plural(hopCount, "hop", "hops"),
     ...(networks.size > 0 ? [plural(networks.size, "network", "networks")] : []),
     ...(delay !== null ? [delayText(delay)] : []),
   ].join(" · ");

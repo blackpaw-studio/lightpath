@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import type { Hop } from "../protocol";
-import { hopRowEl, quietRowEl, rttText, type RowHandlers } from "./hops";
+import { hopRowEl, quietRowEl, rttText, QUIET_SUBTITLE, STOPPED_SUBTITLE, type RowHandlers } from "./hops";
 import type { Row } from "./rows";
 
 const hop = (over: Partial<Hop> = {}): Hop => ({
@@ -12,8 +12,8 @@ const hop = (over: Partial<Hop> = {}): Hop => ({
 const handlers = (): RowHandlers => ({ onToggle: vi.fn(), onFocus: vi.fn() });
 const hopRow = (h: Hop, expanded = false, hs = handlers()) =>
   hopRowEl(document, { kind: "hop", key: "h" + h.ttl, hop: h } as Extract<Row, { kind: "hop" }>, expanded, hs);
-const quietRow = (ttls: number[], expanded = false, hs = handlers()) =>
-  quietRowEl(document, { kind: "quiet", key: "q" + ttls[0], ttls }, expanded, hs);
+const quietRow = (ttls: number[], expanded = false, hs = handlers(), stopped = false) =>
+  quietRowEl(document, { kind: "quiet", key: "q" + ttls[0], ttls }, expanded, hs, stopped);
 const head = (el: HTMLElement) => el.querySelector<HTMLElement>('[role="button"]')!;
 const details = (el: HTMLElement) => el.querySelector<HTMLElement>(".details")!;
 
@@ -101,6 +101,17 @@ describe("hop row", () => {
     expect(head(el).getAttribute("aria-expanded")).toBe("false");
     expect(hs.onToggle).toHaveBeenLastCalledWith("h3", false);
   });
+  it("animates the reveal only after a user toggle, never on a render", () => {
+    const rendered = hopRow(hop(), true);
+    expect(rendered.classList.contains("opening")).toBe(false);
+    const el = hopRow(hop());
+    head(el).click();
+    expect(el.classList.contains("opening")).toBe(true);
+    details(el).dispatchEvent(new Event("animationend", { bubbles: true }));
+    expect(el.classList.contains("opening")).toBe(false);
+    head(el).click(); // closing never animates
+    expect(el.classList.contains("opening")).toBe(false);
+  });
   it("prevents the page scroll on Space", () => {
     const e = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
     head(hopRow(hop())).dispatchEvent(e);
@@ -122,6 +133,12 @@ describe("quiet row", () => {
     expect(el.textContent).toContain("Many networks hide their routers; the path continues.");
     expect(el.querySelector(".connector")).not.toBeNull();
     expect(el.querySelector(".dot")).toBeNull();
+  });
+  it("says the trace stopped when this is the trailing run of an unreached trace", () => {
+    const el = quietRow([4, 5], false, handlers(), true);
+    expect(el.querySelector(".subtitle")!.textContent).toBe(STOPPED_SUBTITLE);
+    expect(STOPPED_SUBTITLE).toBe("The trace stopped here; the destination didn't answer.");
+    expect(quietRow([4, 5]).querySelector(".subtitle")!.textContent).toBe(QUIET_SUBTITLE);
   });
   it("uses the singular for one router", () => {
     expect(quietRow([2]).querySelector(".place")!.textContent).toBe("1 router stayed quiet");

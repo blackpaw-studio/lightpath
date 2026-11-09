@@ -103,7 +103,8 @@
 .dot.hollow { background: transparent; }
 .place { flex: 1; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
 .delay { font: 500 12px var(--mono); color: var(--dim); white-space: nowrap; }
-.details { padding: 0 10px 10px 29px; animation: reveal 0.16s ease-out; }
+.details { padding: 0 10px 10px 29px; }
+.opening .details { animation: reveal 0.16s ease-out; }
 .detail-list { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: 12px; }
 .detail-list dt { color: var(--dim); }
 .detail-list dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }

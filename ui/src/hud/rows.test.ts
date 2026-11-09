@@ -3,6 +3,7 @@ import type { Hop, Probe } from "../protocol";
 import { initialState, type TraceState } from "../reducer";
 import {
   delayText, groupHops, hasSolidLocation, isIpLiteral, isPrivateIp, isQuiet, medianRtt, placeLabel, summaryLine,
+  trailingStopKey,
 } from "./rows";
 
 const probes = (...ms: (number | null)[]): Probe[] => ms.map((rttMs) => ({ ip: rttMs === null ? null : "9.9.9.9", rttMs }));
@@ -58,6 +59,13 @@ describe("placeLabel", () => {
   });
   it("adds the place to the router when known", () => {
     expect(placeLabel(hop(1, { ip: "192.168.1.1", city: "Toronto", geoSource: "local" }))).toBe("Your router · Toronto");
+  });
+  it("lets CGNAT hops past the first fall through to the network/place label", () => {
+    expect(placeLabel(hop(3, { ip: "100.64.1.1", asn: 701, org: "Verizon", city: "Boston" }))).toBe("Verizon · Boston");
+    expect(placeLabel(hop(3, { ip: "100.64.1.1", city: "Boston" }))).toBe("Boston");
+    expect(placeLabel(hop(3, { ip: "100.64.1.1" }))).toBe("100.64.1.1");
+    expect(placeLabel(hop(1, { ip: "100.64.1.1" }))).toBe("Your router");
+    expect(placeLabel(hop(3, { ip: "10.1.1.1" }))).toBe("Local network");
   });
   it("calls other private hops 'Local network'", () => {
     expect(placeLabel(hop(2, { ip: "10.0.0.1" }))).toBe("Local network");
@@ -119,6 +127,12 @@ describe("isQuiet / groupHops", () => {
     expect(split[3]).toMatchObject({ kind: "quiet", ttls: [4, 5] });
   });
 
+  it("only merges consecutive ttls: a gap in the list starts a new run", () => {
+    const rows = groupHops([hop(1), quiet(2), quiet(4), quiet(5)]);
+    expect(rows.map((r) => r.key)).toEqual(["h1", "q2", "q4"]);
+    expect(rows[2]).toMatchObject({ kind: "quiet", ttls: [4, 5] });
+  });
+
   it("handles leading and trailing runs", () => {
     const rows = groupHops([quiet(1), quiet(2), hop(3), quiet(4), quiet(5)]);
     expect(rows.map((r) => (r.kind === "quiet" ? r.ttls : r.hop.ttl))).toEqual([[1, 2], 3, [4, 5]]);
@@ -126,7 +140,7 @@ describe("isQuiet / groupHops", () => {
 });
 
 describe("summaryLine", () => {
-  const withHops = (hops: Hop[]): TraceState => ({ ...initialState, status: "done", target: "x", hops });
+  const withHops = (hops: Hop[], reached: boolean | null = true): TraceState => ({ ...initialState, status: "done", target: "x", hops, reached });
   it("reports hops, distinct networks and the last responding hop's typical delay", () => {
     const s = withHops([
       hop(1, { ip: "192.168.1.1" }),
@@ -134,9 +148,8 @@ describe("summaryLine", () => {
       hop(3, { asn: 701, org: "UUNET" }),
       quiet(4),
       hop(5, { asn: 15169, org: "GOOGLE", probes: probes(20, 24, 22) }),
-      quiet(6),
     ]);
-    expect(summaryLine(s)).toBe("6 hops · 2 networks · 22 ms");
+    expect(summaryLine(s)).toBe("5 hops · 2 networks · 22 ms");
   });
   it("falls back to the short name when the ASN is unknown, and ignores private hops", () => {
     const s = withHops([
@@ -146,8 +159,42 @@ describe("summaryLine", () => {
     ]);
     expect(summaryLine(s)).toBe("3 hops · 1 network · 11 ms");
   });
+  it("counts one network when several ASNs share a short name (AS7922 + AS33651 are both Comcast)", () => {
+    const s = withHops([hop(1, { asn: 7922, org: "COMCAST-7922" }), hop(2, { asn: 33651, org: "COMCAST-33651" })]);
+    expect(summaryLine(s)).toBe("2 hops · 1 network · 11 ms");
+  });
+  it("counts distinct unknown ASNs separately", () => {
+    const s = withHops([hop(1, { asn: 64500, org: null }), hop(2, { asn: 64501, org: null })]);
+    expect(summaryLine(s)).toBe("2 hops · 2 networks · 11 ms");
+  });
   it("singularises one hop and omits unknowns", () => {
     expect(summaryLine(withHops([hop(1, { ip: "192.168.1.1" })]))).toBe("1 hop · 11 ms");
     expect(summaryLine(withHops([quiet(1)]))).toBe("1 hop");
+  });
+  it("on an unreached trace counts hops only up to the last responding hop and shows no delay", () => {
+    const s = withHops([
+      hop(1, { ip: "192.168.1.1" }),
+      hop(2, { asn: 701, org: "Verizon" }),
+      quiet(3), quiet(4), quiet(5),
+    ], false);
+    expect(summaryLine(s)).toBe("2 hops · 1 network");
+  });
+  it("on an unreached trace with no replies at all, still counts the hops tried", () => {
+    expect(summaryLine(withHops([quiet(1), quiet(2)], false))).toBe("2 hops");
+  });
+});
+
+describe("trailingStopKey", () => {
+  const done = (hops: Hop[], reached: boolean | null): TraceState => ({ ...initialState, status: "done", target: "x", hops, reached });
+  it("names the trailing quiet run of a finished, unreached trace", () => {
+    const s = done([hop(1), quiet(2), hop(3), quiet(4), quiet(5)], false);
+    expect(trailingStopKey(s, groupHops(s.hops))).toBe("q4");
+  });
+  it("is null when the trace reached, is still running, or does not end quiet", () => {
+    const hops = [hop(1), quiet(2)];
+    expect(trailingStopKey(done(hops, true), groupHops(hops))).toBeNull();
+    expect(trailingStopKey({ ...done(hops, null), status: "running" }, groupHops(hops))).toBeNull();
+    const ends = [quiet(1), hop(2)];
+    expect(trailingStopKey(done(ends, false), groupHops(ends))).toBeNull();
   });
 });

@@ -203,6 +203,29 @@ describe("friendly hop list", () => {
   });
 });
 
+describe("hud details", () => {
+  it("restores keyboard focus without scrolling the list", () => {
+    const { root, hud } = setup();
+    hud.render(withHops([hop(1), hop(2)]), connected);
+    head(root, '[data-ttl="2"]').focus();
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    hud.render(withHops([hop(1), hop(2), hop(3)]), connected);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+  it("gives the trailing quiet run of an unreached finished trace the 'stopped' subtitle", () => {
+    const { root, hud } = setup();
+    const s = [
+      { type: "trace.started", target: "example.com", resolvedIp: null, origin } as const,
+      { type: "hop", ...hop(1) } as const, { type: "hop", ...quietHop(2) } as const,
+      { type: "trace.done", reached: false } as const,
+    ].reduce(reduce, initialState);
+    hud.render(s, connected);
+    expect(root.querySelector(".quiet .subtitle")!.textContent).toBe("The trace stopped here; the destination didn't answer.");
+    expect(root.querySelector(".stats")!.textContent).toBe("1 hop");
+  });
+});
+
 describe("install hint", () => {
   const hint = (ua: string) => {
     const root = document.createElement("div");
