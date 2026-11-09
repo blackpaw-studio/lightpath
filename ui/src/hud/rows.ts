@@ -1,11 +1,13 @@
 // Pure view-model helpers for the hop list: formatting, labels and grouping.
 import { destinationTtl, sceneDestination } from "../destination";
+import type { LocationDoubt, MaybeShown } from "../plausibility";
 import type { Destination, Hop, Probe } from "../protocol";
 import type { TraceState } from "../reducer";
 import { shortNetworkName } from "./network";
 
 export type Row =
-  | { readonly kind: "hop"; readonly key: string; readonly hop: Hop }
+  /** `doubt`: the IP database's location was ruled out by the reply delay, so the hop is an estimate. */
+  | { readonly kind: "hop"; readonly key: string; readonly hop: Hop; readonly doubt?: LocationDoubt }
   /** A run of silent hops. `title` names it by its neighbours (see quietRunTitle); absent means the generic copy. */
   | { readonly kind: "quiet"; readonly key: string; readonly ttls: readonly number[]; readonly title?: string }
   /** The end of a quiet finish whose destination answers over TCP. `ttl` is its scene entry, null when the scene draws none. */
@@ -69,8 +71,8 @@ export const hasSolidLocation = (hop: Hop): boolean => hop.geoSource !== "estima
 export const isQuiet = (hop: Hop): boolean => hop.probes.every((p) => p.rttMs === null);
 
 /** Primary row text: place and short network, or a plain-language name for local hops. */
-export const placeLabel = (hop: Hop): string => {
-  const place = hop.city === null ? null : (hasSolidLocation(hop) ? "" : "≈ ") + hop.city;
+export const placeLabel = (hop: Hop, doubted = false): string => {
+  const place = hop.city === null ? (doubted ? "≈" : null) : (hasSolidLocation(hop) ? "" : "≈ ") + hop.city;
   // CGNAT past the first hop is the ISP's own gear: label it by network/place like any public hop.
   if (isPrivateIp(hop.ip) && !(hop.ttl >= 2 && isCgnat(hop.ip))) {
     if (hop.ttl !== 1) return "Local network";
@@ -126,8 +128,11 @@ const nameGaps = (rows: readonly MeasuredRow[]): readonly MeasuredRow[] =>
  * The hop list's rows: hops, named quiet gaps and, for a trace that stopped early, an
  * honest ending in place of the trailing silent hops (the destination, or a closing row).
  */
-export const buildRows = (state: TraceState): readonly Row[] => {
-  const rows = nameGaps(groupHops(state.hops));
+export const buildRows = (state: MaybeShown): readonly Row[] => {
+  const rows = nameGaps(groupHops(state.hops)).map((r) => {
+    const doubt = r.kind === "hop" ? state.doubts?.get(r.hop.ttl) : undefined;
+    return doubt ? { ...r, doubt } : r;
+  });
   if (state.status !== "done" || state.endReason !== "quiet") return rows;
   const trailing = rows.at(-1);
   const body = trailing?.kind === "quiet" ? rows.slice(0, -1) : rows;

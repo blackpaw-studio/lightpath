@@ -235,6 +235,23 @@ describe("quietRunTitle", () => {
   });
 });
 
+describe("buildRows with doubted locations", () => {
+  it("attaches the doubt to its hop row", () => {
+    const h = { ...hop(2), geoSource: "estimated" as const, lat: null, lon: null, city: null };
+    const doubt = { place: "Brisbane", rttMs: 10 };
+    const rows = buildRows({ ...initialState, hops: [h], doubts: new Map([[2, doubt]]), destinationDoubt: null });
+    expect(rows[0]).toMatchObject({ kind: "hop", doubt });
+  });
+});
+
+describe("placeLabel for a doubted hop", () => {
+  it("marks the network with a bare ≈ since no place is known", () => {
+    const h = { ...hop(2), asn: 701, org: "UUNET - Verizon Business, US", geoSource: "estimated" as const, city: null, lat: null, lon: null };
+    expect(placeLabel(h, true)).toBe("Verizon · ≈");
+    expect(placeLabel(h)).toBe("Verizon");
+  });
+});
+
 describe("buildRows", () => {
   it("names a gap between two responding hops by its neighbours", () => {
     const rows = buildRows(finished([verizon(1), quiet(2), quiet(3), quiet(4), verizon(5), quiet(6), cloudflare(7)], { reached: true, endReason: "reached" }));

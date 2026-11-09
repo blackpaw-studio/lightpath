@@ -27,6 +27,9 @@ export interface ShownState extends TraceState {
   readonly destinationDoubt: LocationDoubt | null;
 }
 
+/** The doubt fields, absent on a plain reducer state (consumers that only read them accept either). */
+export type MaybeShown = TraceState & Partial<Pick<ShownState, "doubts" | "destinationDoubt">>;
+
 /** True when `pos` is within what light can cover out and back in `minRttMs`, plus the slack. */
 export const isPlausible = (originPos: Vec3, pos: Vec3, minRttMs: number): boolean =>
   angularDistance(originPos, pos) * EARTH_KM <= KM_PER_MS_RTT * minRttMs + SLACK_KM;

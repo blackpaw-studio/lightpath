@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CANCELLED_MESSAGE, DISCONNECTED_MESSAGE, createController, hudView, type HudLike, type SceneLike } from "./app";
 import type { ConnState } from "./conn";
 import type { ClientMsg, ServerMsg } from "./protocol";
+import type { ShownState } from "./plausibility";
 import type { TraceState } from "./reducer";
 import type { View } from "./hud/hud";
 import type { ViewMode } from "./scene/transition";
@@ -18,7 +19,7 @@ const connected: ConnState = { status: "connected", failures: 0, slow: false };
 const disconnected: ConnState = { status: "disconnected", failures: 1, slow: true };
 
 const fakeHud = () => {
-  const calls = { renders: [] as [TraceState, ConnState][], views: [] as View[], focus: [] as (number | null)[] };
+  const calls = { renders: [] as [ShownState, ConnState][], views: [] as View[], focus: [] as (number | null)[] };
   const hud: HudLike = {
     render: (s, c) => calls.renders.push([s, c]),
     setView: (v) => calls.views.push(v),
@@ -29,7 +30,7 @@ const fakeHud = () => {
 
 const fakeScene = (initial: ViewMode = "globe") => {
   let mode: ViewMode = initial;
-  const seen: TraceState[] = [];
+  const seen: ShownState[] = [];
   const scene: SceneLike = {
     setState: (s) => seen.push(s),
     dive: () => { mode = "diving"; return true; },
@@ -67,7 +68,8 @@ describe("createController", () => {
     expect(ctl.state()).toMatchObject({ status: "error", error: { code: "disconnected", message: DISCONNECTED_MESSAGE } });
     expect(ctl.state().hops).toHaveLength(1);
     expect(s.seen[s.seen.length - 1]!.status).toBe("error");
-    expect(last()).toEqual([ctl.state(), disconnected]);
+    expect(last()[0]).toMatchObject(ctl.state());
+    expect(last()[1]).toEqual(disconnected);
   });
 
   it("does not touch a finished trace or a connection that never opened", () => {
@@ -114,6 +116,34 @@ describe("createController", () => {
     s.setMode("globe");
     ctl.frame();
     expect(calls.views).toEqual(["globe", "tunnel", "globe"]);
+  });
+
+  it("hands the HUD and the scene the same derived state, with an impossible location dropped", () => {
+    const { ctl, last } = setup();
+    const s = fakeScene();
+    ctl.attachScene(s.scene);
+    const far: ServerMsg = { ...(hop(1) as Extract<ServerMsg, { type: "hop" }>), lat: -27.47, lon: 153.03, city: "Brisbane", geoSource: "api" };
+    [started, far].forEach(ctl.onMessage);
+    ctl.frame();
+    const shown = s.seen[s.seen.length - 1]!;
+    expect(last()[0]).toBe(shown);
+    expect(shown.hops[0]).toMatchObject({ geoSource: "estimated", lat: null, city: null });
+    expect(shown.doubts.get(1)).toEqual({ place: "Brisbane", rttMs: 1 });
+    expect(ctl.state().hops[0]).toMatchObject({ geoSource: "api", city: "Brisbane" }); // the raw state stays as sent
+  });
+
+  it("derives once per state, not once per frame", () => {
+    const derive = vi.fn((s: TraceState): ShownState => ({ ...s, doubts: new Map(), destinationDoubt: null }));
+    const ctl = createController({ send: () => true, derive });
+    const h = fakeHud();
+    const s = fakeScene();
+    ctl.attachHud(h.hud);
+    ctl.attachScene(s.scene);
+    ctl.onMessage(started);
+    ctl.frame();
+    ctl.frame();
+    expect(derive.mock.calls.filter(([st]) => st === ctl.state())).toHaveLength(1);
+    expect(s.seen[s.seen.length - 1]).toBe(s.seen[s.seen.length - 2]);
   });
 
   it("clears the hop focus when a new trace starts", () => {

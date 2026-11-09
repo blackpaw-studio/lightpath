@@ -1,5 +1,6 @@
 import type { Destination, GeoSource, Probe } from "../protocol";
 import { meanRtt, rttColor } from "../color";
+import type { LocationDoubt } from "../plausibility";
 import { shortNetworkName } from "./network";
 import { delayText, hasSolidLocation, medianRtt, placeLabel, type Row } from "./rows";
 
@@ -29,6 +30,10 @@ const SOURCE_TEXT: Readonly<Record<GeoSource, string>> = {
   local: "Measured (local)",
   estimated: "Estimated",
 };
+
+/** Why a database location was dropped. The wire carries a city, not a country. */
+export const doubtText = (d: LocationDoubt): string =>
+  `IP database says ${d.place ?? "somewhere far away"}, but a ${delayText(d.rttMs)} reply can't come from that far.`;
 
 const asnText = (h: { asn: number | null; org: string | null }): string | null => {
   const text = [h.asn === null ? null : "AS" + h.asn, h.org].filter((x): x is string => x !== null && x !== "").join(" ");
@@ -112,11 +117,11 @@ export const hopRowEl = (doc: Document, row: HopRow, expanded: boolean, h: RowHa
     ["Host", hop.host],
     ["Network", asnText(hop)],
     ["Replies", rttText(hop.probes)],
-    ["Location", SOURCE_TEXT[hop.geoSource]],
+    ["Location", row.doubt ? doubtText(row.doubt) : SOURCE_TEXT[hop.geoSource]],
   ]);
   const li = assemble(
     doc, row.key, "hop",
-    [dot, el(doc, "span", "place", placeLabel(hop)), el(doc, "span", "delay", rtt === null ? "" : delayText(rtt))],
+    [dot, el(doc, "span", "place", placeLabel(hop, row.doubt !== undefined)), el(doc, "span", "delay", rtt === null ? "" : delayText(rtt))],
     detail, expanded, () => h.onFocus(hop.ttl), h,
   );
   li.dataset.ttl = String(hop.ttl);

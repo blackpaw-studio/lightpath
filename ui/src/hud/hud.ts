@@ -1,5 +1,6 @@
 import "./styles.css";
 import type { ConnState } from "../conn";
+import type { MaybeShown } from "../plausibility";
 import type { TraceState } from "../reducer";
 import { rowEl, type RowHandlers } from "./hops";
 import { installPanel } from "./install";
@@ -21,7 +22,7 @@ export interface HudOptions {
 export type View = "globe" | "tunnel";
 
 export interface Hud {
-  render(state: TraceState, conn: ConnState): void;
+  render(state: MaybeShown, conn: ConnState): void;
   /** Sync the Dive/Surface toggle with the scene's current view. */
   setView(view: View): void;
   /** Highlight a hop row (ttl), or clear with null. */
@@ -129,7 +130,7 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
     onFocus: focusHop,
   };
   /** Rebuilds the list but keeps the scroll offset and keyboard focus the user had. */
-  const renderRows = (state: TraceState): void => {
+  const renderRows = (state: MaybeShown): void => {
     const rows = buildRows(state);
     const stopKey = trailingStopKey(state, rows);
     expanded = new Set(rows.map((r) => r.key).filter((k) => expanded.has(k)));

@@ -48,6 +48,15 @@ describe("hop row", () => {
     expect(hollow.querySelector(".dot")!.classList.contains("hollow")).toBe(true);
     expect(hollow.querySelector(".place")!.textContent).toBe("Cloudflare · ≈ San Francisco");
   });
+  it("explains a location the reply delay ruled out, with a hollow dot and a bare ≈", () => {
+    const doubted = hop({ geoSource: "estimated", lat: null, lon: null, city: null });
+    const el = hopRowEl(
+      document, { kind: "hop", key: "h3", hop: doubted, doubt: { place: "Brisbane", rttMs: 10 } }, false, handlers(),
+    );
+    expect(el.querySelector(".dot")!.classList.contains("hollow")).toBe(true);
+    expect(el.querySelector(".place")!.textContent).toBe("Cloudflare · ≈");
+    expect(details(el).textContent).toContain("IP database says Brisbane, but a 10 ms reply can't come from that far.");
+  });
   it("names private hops plainly", () => {
     expect(hopRow(hop({ ttl: 1, ip: "192.168.1.1", asn: null, org: null, city: null })).querySelector(".place")!.textContent)
       .toBe("Your router");
