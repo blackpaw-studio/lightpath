@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { RUN_CMD } from "../src/hud/install";
 import { expectShot, step } from "./harness";
 
 const HOSTED = "https://lightpath.blackpaw.studio";
@@ -36,8 +37,10 @@ test("hosted page without an agent shows the install panel", async ({ page }) =>
   await page.goto(`${HOSTED}/?test=1`);
   const panel = page.locator(".install");
   await expect(panel).toBeVisible();
-  await expect(panel).toContainText("curl -fsSL https://lightpath.blackpaw.studio/install.sh | sh");
-  await expect(panel).toContainText("lightpath");
+  await expect(panel).toContainText(RUN_CMD);
+  await expect(panel).toContainText("Downloads a small helper and starts it. Ctrl-C to stop.");
+  await expect(panel.locator("a.install-link")).toHaveText("Install permanently");
+  await expect(panel.locator("a.install-link")).toHaveAttribute("href", "/install.sh");
   await expect(panel.locator("a.agent-link")).toHaveAttribute("href", "http://127.0.0.1:47800/");
   await expect(page.locator(".chip")).not.toHaveText("connected");
   await expect(page.getByRole("button", { name: "Trace" })).toBeDisabled();
@@ -46,6 +49,27 @@ test("hosted page without an agent shows the install panel", async ({ page }) =>
   await page.waitForFunction(() => "__lightpath" in window, null, { timeout: 30_000 });
   await step(page, 1000);
   await expectShot(page, "install-panel.png");
+});
+
+// The panel must not wait for a retry series. Two ways a first dial never closes:
+// it hangs (a pending Chrome Local Network Access prompt), or it errors with no close (WebKit).
+const withSocket = async (page: Page, body: string): Promise<void> => {
+  await page.addInitScript(`window.WebSocket = class { constructor() { ${body} } close() {} send() {} };`);
+};
+
+test("a hung first dial still shows the install panel within 1.5 s of load", async ({ page }) => {
+  await hostedWithoutAgent(page);
+  await withSocket(page, "");
+  await page.goto(`${HOSTED}/`);
+  await expect(page.locator(".install")).toBeVisible({ timeout: 2000 });
+  await expect(page.locator(".install")).toContainText(RUN_CMD);
+});
+
+test("a dial that errors without ever closing shows the install panel within 1 s", async ({ page }) => {
+  await hostedWithoutAgent(page);
+  await withSocket(page, "setTimeout(() => this.onerror && this.onerror(new Event('error')), 5);");
+  await page.goto(`${HOSTED}/`);
+  await expect(page.locator(".install")).toBeVisible({ timeout: 1000 });
 });
 
 test.describe("phone width", () => {
