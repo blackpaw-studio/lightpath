@@ -133,11 +133,16 @@ func TestDecodeRejectsBadInput(t *testing.T) {
 // Every input ui/src/protocol.ts rejects must be rejected here too.
 func TestDecodeServerRejectsWhatTheUIRejects(t *testing.T) {
 	const hop = `"ttl":3,"probes":[{"ip":"198.51.100.1","rttMs":12.5}],"ip":"198.51.100.1","host":null,"asn":64501,"org":null,"lat":41.88,"lon":-87.63,"city":null,"geoSource":"api","annotations":[]`
+	const destReach = `{"ip":"198.51.100.77","reachable":true,"port":443,"rttMs":18.4,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"api"}`
+	const destUnreach = `{"ip":"203.0.113.9","reachable":false,"port":null,"rttMs":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated"}`
 	const origin = `{"publicIp":null,"lat":null,"lon":null,"city":null,"asn":null,"org":null}`
 	valid := []string{
 		`{"type":"hop",` + hop + `}`,
 		`{"type":"trace.started","target":"x","resolvedIp":null,"origin":` + origin + `}`,
 		`{"type":"hop.update","ttl":3,"asn":null,"geoSource":"local","annotations":["!H"]}`,
+		`{"type":"trace.done","reached":true,"reason":"reached"}`,
+		`{"type":"trace.done","reached":false,"reason":"error"}`,
+		`{"type":"trace.done","reached":false,"reason":"quiet","destination":` + destReach + `}`,
 	}
 	for _, in := range valid {
 		if _, err := DecodeServer([]byte(in)); err != nil {
@@ -154,6 +159,20 @@ func TestDecodeServerRejectsWhatTheUIRejects(t *testing.T) {
 		"update string ttl":   `{"type":"hop.update","ttl":"3"}`,
 		"hop missing fields":  `{"type":"hop","ttl":1}`,
 		"done string reached": `{"type":"trace.done","reached":"yes"}`,
+		// trace.done reason/destination (v2).
+		"done null reason":         `{"type":"trace.done","reached":false,"reason":null}`,
+		"done bogus reason":        `{"type":"trace.done","reached":false,"reason":"bogus"}`,
+		"done empty reason":        `{"type":"trace.done","reached":false,"reason":""}`,
+		"done null destination":    `{"type":"trace.done","reached":false,"destination":null}`,
+		"dest missing reachable":   `{"type":"trace.done","reached":false,"reason":"quiet","destination":` + strings.Replace(destUnreach, `"reachable":false,`, ``, 1) + `}`,
+		"dest reachable null port": `{"type":"trace.done","reached":false,"reason":"quiet","destination":` + strings.Replace(destReach, `"port":443`, `"port":null`, 1) + `}`,
+		"dest reachable null rtt":  `{"type":"trace.done","reached":false,"reason":"quiet","destination":` + strings.Replace(destReach, `"rttMs":18.4`, `"rttMs":null`, 1) + `}`,
+		"dest unreachable port":    `{"type":"trace.done","reached":false,"reason":"quiet","destination":` + strings.Replace(destUnreach, `"port":null`, `"port":443`, 1) + `}`,
+		"dest unreachable rtt":     `{"type":"trace.done","reached":false,"reason":"quiet","destination":` + strings.Replace(destUnreach, `"rttMs":null`, `"rttMs":1.5`, 1) + `}`,
+		"dest bad geoSource":       `{"type":"trace.done","reached":false,"reason":"quiet","destination":` + strings.Replace(destUnreach, `"estimated"`, `"gps"`, 1) + `}`,
+		"dest null ip":             `{"type":"trace.done","reached":false,"reason":"quiet","destination":` + strings.Replace(destUnreach, `"203.0.113.9"`, `null`, 1) + `}`,
+		"reached true with quiet":  `{"type":"trace.done","reached":true,"reason":"quiet"}`,
+		"reached false with reach": `{"type":"trace.done","reached":false,"reason":"reached"}`,
 		// Missing required fields.
 		"done missing reached": `{"type":"trace.done"}`,
 		"error missing msg":    `{"type":"error","code":"busy"}`,
@@ -222,5 +241,34 @@ func TestNewHopUpdateRejectsUnknownAndReservedKeys(t *testing.T) {
 	u, err := NewHopUpdate(3, map[string]any{"asn": 64501, "host": nil})
 	if err != nil || u["asn"] != 64501 || u["ttl"] != 3 {
 		t.Errorf("valid update = %v, %v", u, err)
+	}
+}
+
+func TestTraceDoneLegacyShapeOmitsOptionalFields(t *testing.T) {
+	out, err := json.Marshal(TraceDone{Reached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != `{"type":"trace.done","reached":true}` {
+		t.Errorf("legacy done = %s", out)
+	}
+}
+
+func TestEndReasonValid(t *testing.T) {
+	for _, r := range []EndReason{EndReached, EndQuiet, EndLimit, EndError, EndCancelled} {
+		if !r.Valid() {
+			t.Errorf("%q should be valid", r)
+		}
+	}
+	for _, r := range []EndReason{"", "bogus"} {
+		if r.Valid() {
+			t.Errorf("%q should be invalid", r)
+		}
+	}
+}
+
+func TestVersionIsTwo(t *testing.T) {
+	if Version != 2 {
+		t.Errorf("Version = %d", Version)
 	}
 }
