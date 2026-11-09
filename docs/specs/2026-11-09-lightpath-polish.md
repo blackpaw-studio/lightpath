@@ -1,4 +1,4 @@
-# Lightpath — estimated destination, panel-aware framing, speed-of-light check
+# Lightpath — estimated destination, path framing, speed-of-light check, arc and name fixes
 
 Approved by Evan 2026-11-09 (in conversation). Amends the 2026-11-07 and both 2026-11-08 specs; they govern everything not named here.
 
@@ -29,6 +29,25 @@ Approved by Evan 2026-11-09 (in conversation). Amends the 2026-11-07 and both 20
 - The same check applies to the destination, using its TCP delay when reachable.
 - The check is a pure, unit-tested function in the UI (data stays as the agent sends it). It covers the observed case: 1.1.1.1 placed in Brisbane at about 10 ms from New York becomes an estimate.
 - A hop with no RTT, or no origin location, is left unchanged.
+
+## 4. Frame the whole path (added after Evan's yandex.com trace)
+- Observed: in a trace from Brooklyn to yandex.com (Moscow), the camera showed neither the whole path nor its ends clearly. One hop ran off the bottom of the globe, and Moscow sat at the limb.
+- After a trace (and while it streams), the globe framing fits every drawn node (hops and the destination) into the visible region from §2, with a margin.
+  - When the path spans too much of the globe to fit, centre on the path's great-circle midpoint and zoom out to the maximum distance, so the start and end are both on the visible hemisphere where geometry allows.
+  - This replaces any framing that favours the latest hop over the whole path once the trace is done.
+- Spring and glide rules still apply.
+- Invariant (E2E): after done, with real-macos and a long-haul fixture (New York to Moscow), every drawn node is on the camera-facing hemisphere and inside the visible region.
+
+## 5. Smooth long arcs
+- Observed: the dashed arc from the South Atlantic up to Moscow wobbled along the globe's right edge.
+- Find the root cause first (arc altitude profile, tessellation, depth or occlusion against the globe or atmosphere, or the dash shader). Arcs of any length, up to near-antipodal, must render as one smooth curve. Altitude rises and falls once (unimodal), and the arc never dips under the surface.
+- Add a unit test on the arc geometry builder that fails on the current wobble.
+
+## 6. Network names from the org's descriptive part
+- Observed: "PCCWG-APAC-HK - PCCW Global, Inc., HK" rendered as "Pccwg-Apac-Hk".
+- Team Cymru org strings are usually `HANDLE - Description, CC`. `shortNetworkName` should prefer the description after the first " - " (then cut at the first ",", then strip suffixes) over the handle. It falls back to the handle only when there is no description.
+- Add PCCW Global to the curated table.
+- Keep all existing table matches. Add tests for the PCCW string and for "YANDEX - YANDEX LLC, RU" → "Yandex"; re-run the existing cases.
 
 ## Testing
 - Unit tests:
