@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { latLonToVec3, slerpGreatCircle } from "../geo";
+import { angularDistance, latLonToVec3, slerpGreatCircle } from "../geo";
 import { NO_RTT_COLOR, rttColor } from "../color";
 import type { Destination, Hop, Origin } from "../protocol";
 import { initialState, type TraceState } from "../reducer";
@@ -18,6 +18,17 @@ describe("globeLayout", () => {
     expect(l.origin).toEqual(latLonToVec3(40, -74));
     expect(l.hops[0]!.pos).toEqual(latLonToVec3(51.5, 0));
     expect(l.hops[0]!.estimated).toBe(false);
+  });
+
+  it("places a fast hop between two located neighbours next to the near one, by reply delay", () => {
+    const ny = latLonToVec3(40.7, -74);
+    const london = latLonToVec3(51.5, -0.1);
+    const rtt = (ms: number) => ({ probes: [{ ip: "9.9.9.9", rttMs: ms }] });
+    const l = globeLayout(state([
+      hop(1, { lat: 40.7, lon: -74, geoSource: "api", ...rtt(9) }), hop(2, rtt(10)), hop(3, { lat: 51.5, lon: -0.1, geoSource: "api", ...rtt(72) }),
+    ]));
+    const f = angularDistance(ny, l.hops[1]!.pos) / angularDistance(ny, london);
+    expect(f).toBeCloseTo(1 / 63, 6);
   });
 
   it("estimates hops without geo between their located neighbours", () => {

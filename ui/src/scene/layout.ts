@@ -1,6 +1,7 @@
 import { NO_RTT_COLOR, meanRtt, rttColor } from "../color";
 import { destinationTtl, sceneDestination } from "../destination";
-import { estimatePosition, type LocatedHop } from "../estimate";
+import { estimatePositions, type LocatedHop } from "../estimate";
+import { minRtt } from "../plausibility";
 import { latLonToVec3, type Vec3 } from "../geo";
 import type { Hop } from "../protocol";
 import type { TraceState } from "../reducer";
@@ -35,7 +36,7 @@ const located = (h: Hop): h is Hop & { lat: number; lon: number } => h.lat !== n
  * anchor, unlocated hops are left out rather than placed at (0,0).
  */
 export const globeLayout = (state: TraceState, fallbackOrigin: Vec3 | null = null): GlobeLayout => {
-  const anchors: LocatedHop[] = state.hops.filter(located).map((h) => ({ ttl: h.ttl, pos: latLonToVec3(h.lat, h.lon) }));
+  const anchors: LocatedHop[] = state.hops.filter(located).map((h) => ({ ttl: h.ttl, pos: latLonToVec3(h.lat, h.lon), rttMs: minRtt(h.probes) }));
   const o = state.origin;
   const origin = o && o.lat !== null && o.lon !== null ? latLonToVec3(o.lat, o.lon) : (anchors[0]?.pos ?? fallbackOrigin);
   if (!origin) return { generation: state.generation, origin: null, hops: [] };
@@ -46,12 +47,15 @@ export const globeLayout = (state: TraceState, fallbackOrigin: Vec3 | null = nul
     ttl: destinationTtl(state.hops), pos: latLonToVec3(dest.lat, dest.lon), estimated: true, located: true, timeout: false,
     rttMs: dest.rttMs, color: dest.rttMs === null ? NO_RTT_COLOR : rttColor(dest.rttMs),
   } : null;
-  const estimationAnchors = destHop ? [...anchors, { ttl: destHop.ttl, pos: destHop.pos }] : anchors;
+  const estimationAnchors = destHop ? [...anchors, { ttl: destHop.ttl, pos: destHop.pos, rttMs: destHop.rttMs }] : anchors;
+  const estimated = estimatePositions(
+    state.hops.filter((h) => !located(h)).map((h) => ({ ttl: h.ttl, rttMs: minRtt(h.probes) })), estimationAnchors, origin,
+  );
   const hops = state.hops.map((h): LaidHop => {
     const rttMs = meanRtt(h.probes);
     return {
       ttl: h.ttl,
-      pos: located(h) ? latLonToVec3(h.lat, h.lon) : estimatePosition(h.ttl, estimationAnchors, origin),
+      pos: located(h) ? latLonToVec3(h.lat, h.lon) : estimated.get(h.ttl)!,
       estimated: !located(h),
       located: located(h),
       timeout: h.probes.every((p) => p.rttMs === null),

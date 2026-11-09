@@ -36,7 +36,7 @@ export const isPlausible = (originPos: Vec3, pos: Vec3, minRttMs: number): boole
 
 const MEASURED: ReadonlySet<string> = new Set(["api", "hostname"]);
 
-const minRtt = (probes: readonly Probe[]): number | null =>
+export const minRtt = (probes: readonly Probe[]): number | null =>
   probes.reduce<number | null>((m, p) => (p.rttMs === null || (m !== null && m <= p.rttMs) ? m : p.rttMs), null);
 
 interface Geo { readonly lat: number | null; readonly lon: number | null }
