@@ -5,7 +5,7 @@
 import { expect, test } from "@playwright/test";
 import { FIXTURES } from "./agents";
 import {
-  byGeneration, call, expectShot, expectSmooth, openApp, pathExtent, poseIds, startTrace, state, step, stepLive, STREAM_MAX_JUMP_WORLD,
+  byGeneration, call, expectArcsSmooth, expectShot, expectSmooth, openApp, pathExtent, poseIds, startTrace, state, step, stepLive, STREAM_MAX_JUMP_WORLD,
   traceOptions, waitForDone,
 } from "./harness";
 
@@ -108,4 +108,5 @@ test("reachable: the trace ending moves nothing abruptly and flickers nothing", 
   // The trailing quiet hops spread toward the destination when the trace ends: a real move, and a smooth one.
   expect(pathExtent(frames, "1:11")).toBeGreaterThan(0.05);
   expectSmooth(frames, traceOptions(STREAM_MAX_JUMP_WORLD));
+  expectArcsSmooth(frames);
 });

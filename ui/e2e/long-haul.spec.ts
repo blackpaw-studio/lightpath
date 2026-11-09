@@ -3,7 +3,7 @@
 import { expect, test } from "@playwright/test";
 import { FIXTURES } from "./agents";
 import {
-  byGeneration, call, expectClearOfPanels, expectFacingAndSafe, expectShot, expectSmooth, openApp, startTrace, state, step, stepLive,
+  byGeneration, call, expectArcsSmooth, expectClearOfPanels, expectFacingAndSafe, expectShot, expectSmooth, openApp, startTrace, state, step, stepLive,
   STREAM_MAX_JUMP_WORLD, traceOptions, waitForDone,
 } from "./harness";
 
@@ -21,6 +21,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 375, height: 812 
       expectClearOfPanels(frames);
       await expectFacingAndSafe(page, frames[frames.length - 1]!);
       expectSmooth(byGeneration(frames), traceOptions(STREAM_MAX_JUMP_WORLD));
+      expectArcsSmooth(byGeneration(frames));
     });
   });
 }

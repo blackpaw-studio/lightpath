@@ -9,6 +9,7 @@ import type { Vec3 } from "../geo";
 import { writeArcPoints, type ArcSpan } from "./arcGeometry";
 import type { PoseMap } from "./globePoses";
 import { glowTexture } from "./glow";
+import type { DrawnMark } from "./marks";
 import { PULSE_MS, pulseHead, pulseIntensity } from "./pulse";
 
 /** An arc from hop `from` to hop `to` (keys into the PoseMap). */
@@ -23,18 +24,18 @@ export interface ArcInfo {
   readonly span?: ArcRun;
 }
 
-/** The run an arc belongs to: its anchors' pose keys, and the arc's extent as fractions of the run's ttls. */
+/** The run an arc belongs to: the pose keys of its two located anchors. */
 export interface ArcRun {
   readonly from: number;
   readonly to: number;
-  readonly t0: number;
-  readonly t1: number;
 }
 
 export interface Arcs {
   /** Endpoints come only from `poses`; arcs are keyed by `to` within a trace `generation`. */
   update(poses: PoseMap, arcs: readonly ArcInfo[], nowMs: number, reducedMotion: boolean, generation: number): void;
   setResolution(width: number, height: number, pixelRatio: number): void;
+  /** The highest point of each drawn arc this frame, keyed by the ttl it ends at (trace entities). */
+  apexes(): ReadonlyMap<number, DrawnMark>;
   /** Global fade (the tunnel lane fades globe arcs out). */
   setOpacity(o: number): void;
   dispose(): void;
@@ -58,7 +59,10 @@ interface Entry {
   readonly distBuf: InstancedInterleavedBuffer;
   readonly head: Sprite;
   readonly bornAt: number;
+  readonly to: number;
   readonly seed: number;
+  /** Highest point as last drawn; null while the arc is hidden. */
+  apex: DrawnMark | null;
   estimated: boolean;
   /** Parsed endpoint colours, re-parsed only when the hex strings change. */
   readonly colorFrom: Color;
@@ -92,7 +96,7 @@ const makeEntry = (to: number, nowMs: number, estimated: boolean, texture: Textu
     map: texture, blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
   }));
   head.renderOrder = 4;
-  return { line, material, pos, col, dist, posBuf, colBuf, distBuf, head, bornAt: nowMs, seed: (to * 0.381966) % 1, estimated,
+  return { line, material, pos, col, dist, posBuf, colBuf, distBuf, head, bornAt: nowMs, to, apex: null, seed: (to * 0.381966) % 1, estimated,
     colorFrom: new Color(), colorTo: new Color(), colorKey: "" };
 };
 
@@ -104,11 +108,23 @@ const angleBetween = (a: Vec3, b: Vec3): number => {
   return Math.atan2(Math.hypot(cx, cy, cz), a[0] * b[0] + a[1] * b[1] + a[2] * b[2]);
 };
 
-/** The run's full angle comes from its anchors' poses this frame, so a glide keeps the hump continuous. */
-const spanOf = (run: ArcRun | undefined, poses: PoseMap): ArcSpan | undefined => {
+const MIN_RUN_ANGLE = 1e-4;
+const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
+
+/**
+ * The arc's extent along its run, from where its endpoints are drawn this frame: their angle from the
+ * near anchor over the anchors' full angle. Nodes stacked on an anchor get s0 = s1 (a flat arc) and the
+ * hump grows smoothly as they spread, instead of jumping with the run's membership.
+ */
+const spanOf = (run: ArcRun | undefined, info: ArcInfo, poses: PoseMap): ArcSpan | undefined => {
   const a = run && poses.get(run.from);
   const b = run && poses.get(run.to);
-  return run && a && b ? { t0: run.t0, t1: run.t1, theta: angleBetween(a.pos, b.pos) } : undefined;
+  const p0 = poses.get(info.from);
+  const p1 = poses.get(info.to);
+  if (!run || !a || !b || !p0 || !p1) return undefined;
+  const theta = angleBetween(a.pos, b.pos);
+  if (theta < MIN_RUN_ANGLE) return undefined;
+  return { t0: clamp01(angleBetween(a.pos, p0.pos) / theta), t1: clamp01(angleBetween(a.pos, p1.pos) / theta), theta };
 };
 
 export const createArcs = (parent: Object3D, texture: () => Texture = glowTexture): Arcs => {
@@ -143,7 +159,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
     const age = nowMs - e.bornAt;
     const opts = { reducedMotion, estimated: info.estimated, seed: e.seed };
     const gain = alpha * ARC_GAIN;
-    writeArcPoints(pts, a, b, SEGMENTS, undefined, spanOf(info.span, poses));
+    writeArcPoints(pts, a, b, SEGMENTS, undefined, spanOf(info.span, info, poses));
     // Per-vertex colour = endpoint gradient × pulse brightness, computed once per vertex.
     for (let v = 0; v <= SEGMENTS; v++) {
       const u = v / SEGMENTS;
@@ -165,6 +181,11 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
       acc += Math.hypot(pts[s1]! - pts[s0]!, pts[s1 + 1]! - pts[s0 + 1]!, pts[s1 + 2]! - pts[s0 + 2]!);
       e.dist[i * 2 + 1] = acc;
     }
+    let top = 0;
+    for (let v = 1; v <= SEGMENTS; v++) {
+      if (Math.hypot(pts[v * 3]!, pts[v * 3 + 1]!, pts[v * 3 + 2]!) > Math.hypot(pts[top * 3]!, pts[top * 3 + 1]!, pts[top * 3 + 2]!)) top = v;
+    }
+    e.apex = { pos: [pts[top * 3]!, pts[top * 3 + 1]!, pts[top * 3 + 2]!], alpha };
     e.posBuf.needsUpdate = true;
     e.colBuf.needsUpdate = true;
     e.distBuf.needsUpdate = true;
@@ -206,6 +227,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
         e.line.visible = !degenerate;
         if (degenerate) {
           e.head.visible = false;
+          e.apex = null;
           continue;
         }
         fill(e, a.pos, b.pos, info, poses, nowMs, reducedMotion, Math.min(a.opacity, b.opacity) * globalOpacity);
@@ -215,6 +237,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
       resolution = { w, h, dpr };
       entries.forEach(applyResolution);
     },
+    apexes: () => new Map([...entries.values()].flatMap((e) => (e.apex && e.line.visible ? [[e.to, e.apex] as const] : []))),
     setOpacity: (o) => { globalOpacity = o; },
     dispose: () => entries.forEach((e, k) => remove(k, e)),
   };

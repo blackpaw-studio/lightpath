@@ -43,18 +43,18 @@ describe("arc spans over runs of estimated hops", () => {
     ({ ...initialState, status: "done", origin, hops, reached: true, endReason: "reached", destination, ...over });
   const spans = (s: TraceState) => arcInfos(globeLayout(s)).map((a) => a.span ?? null);
 
-  it("gives every arc through a run between two located hops that run's span, as fractions of its ttls", () => {
+  it("gives every arc through a run between two located hops that run's span, (its anchors)", () => {
     const sp = spans(stateOf([located(1), hop(2, true), hop(3, true), located(4)]));
     expect(sp[0]).toBeNull();
-    expect(sp[1]).toEqual({ from: 1, to: 4, t0: 0, t1: 1 / 3 });
-    expect(sp[2]).toEqual({ from: 1, to: 4, t0: 1 / 3, t1: 2 / 3 });
-    expect(sp[3]).toEqual({ from: 1, to: 4, t0: 2 / 3, t1: 1 });
+    expect(sp[1]).toEqual({ from: 1, to: 4 });
+    expect(sp[2]).toEqual({ from: 1, to: 4 });
+    expect(sp[3]).toEqual({ from: 1, to: 4 });
   });
 
   it("uses the located destination as the run's far anchor", () => {
     const s = stateOf([located(1), hop(2, true), hop(3, true)], dest, { reached: false, endReason: "quiet" });
     const sp = spans(s);
-    expect(sp[3]).toEqual({ from: 1, to: 4, t0: 2 / 3, t1: 1 });
+    expect(sp[3]).toEqual({ from: 1, to: 4 });
   });
 
   it("leaves a run with no anchor on either side as plain arcs", () => {

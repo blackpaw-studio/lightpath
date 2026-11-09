@@ -13,7 +13,7 @@ import { createCrossfade, crossfadeOpacity, crossfadeTrace } from "./crossfade";
 import { createGates } from "./gates";
 import { createGlobeView, type GlobeView, type GlobeViewOptions } from "./globe";
 import { createGlobePoseSource, ORIGIN_KEY, type PoseMap } from "./globePoses";
-import { markEntities } from "./marks";
+import { arcEntities, markEntities } from "./marks";
 import type { Rect } from "./safeArea";
 import { TUBE_R, createTunnel } from "./tunnel";
 import { createTunnelController } from "./tunnelController";
@@ -109,7 +109,9 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
   const liveTrace = (): TraceFrame => {
     const t = globe.trace();
     const rigCut = t.cut === true && ctl.mode() === "globe";
-    const entities = { ...t.entities, ...markEntities(globe.nodeMarks(), gates.marks(), globe.project) };
+    // Arc shapes are traced on the globe only: the tunnel flight retires them while the poses fly.
+    const arcs = ctl.mode() === "globe" ? arcEntities(globe.arcMarks(), globe.project) : {};
+    const entities = { ...t.entities, ...arcs, ...markEntities(globe.nodeMarks(), gates.marks(), globe.project) };
     return { ...t, entities, cut: rigCut || ctl.cut() };
   };
 

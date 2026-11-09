@@ -51,6 +51,8 @@ export interface GlobeView extends Steppable {
   trace(): TraceFrame;
   /** Each node's dot as drawn this frame (tracing). */
   nodeMarks(): ReadonlyMap<number, DrawnMark>;
+  /** Each arc's highest point as drawn this frame, keyed by the ttl it ends at. */
+  arcMarks(): ReadonlyMap<number, DrawnMark>;
   /** World point → CSS-pixel screen position through the current camera. */
   project(p: Vec3): Projection;
   /** Replace the per-frame pose source (tunnel lane: wraps createGlobePoseSource). */
@@ -106,10 +108,7 @@ const runSpans = (hops: readonly LaidHop[]): ReadonlyMap<number, ArcRun> => {
     const from = hops[i - 1];
     const to = hops[j + 1];
     if (from && to) {
-      const length = to.ttl - from.ttl;
-      for (let k = i; k <= j + 1; k++) {
-        spans.set(k, { from: from.ttl, to: to.ttl, t0: (hops[k - 1]!.ttl - from.ttl) / length, t1: (hops[k]!.ttl - from.ttl) / length });
-      }
+      for (let k = i; k <= j + 1; k++) spans.set(k, { from: from.ttl, to: to.ttl });
     }
     i = j + 1;
   }
@@ -279,6 +278,7 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     poses: () => poses,
     trace: () => ({ ...projectFrame(now, poses, project), ...(cutThisFrame ? { cut: true } : {}) }),
     nodeMarks: () => nodes.marks(),
+    arcMarks: () => arcs.apexes(),
     project,
     setPoseSource: (s) => { poseSource = s; },
     setGlobeOpacity: (o) => {
