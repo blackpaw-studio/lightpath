@@ -20,7 +20,7 @@ const setup = (hosted = true) => {
   const h = { onTrace: vi.fn(), onCancel: vi.fn(), onFocusHop: vi.fn(), onDive: vi.fn(), onSurface: vi.fn() };
   return { root, h, hud: mount(root, h, { hosted }) };
 };
-const connected = { status: "connected", failures: 0 } as const;
+const connected = { status: "connected", failures: 0, slow: false } as const;
 
 describe("hud", () => {
   beforeEach(() => { document.body.replaceChildren(); });
@@ -55,19 +55,23 @@ describe("hud", () => {
   });
   it("disables tracing while disconnected", () => {
     const { root, hud } = setup();
-    hud.render(initialState, { status: "disconnected", failures: 1 });
+    hud.render(initialState, { status: "disconnected", failures: 1, slow: true });
     expect(root.querySelector<HTMLButtonElement>("button.trace")!.disabled).toBe(true);
   });
-  it("shows the install panel only on the hosted page after a failure", () => {
+  it("shows the install panel only on the hosted page once the agent is slow to answer", () => {
     const a = setup(true);
-    a.hud.render(initialState, { status: "connecting", failures: 0 });
-    expect(a.root.querySelector(".install")!.hasAttribute("hidden")).toBe(true);
-    a.hud.render(initialState, { status: "disconnected", failures: 1 });
-    expect(a.root.querySelector(".install")!.hasAttribute("hidden")).toBe(false);
+    const hidden = () => a.root.querySelector(".install")!.hasAttribute("hidden");
+    a.hud.render(initialState, { status: "connecting", failures: 0, slow: false });
+    expect(hidden()).toBe(true);
+    // A hung dial never closes: failures stays 0 but slow is set.
+    a.hud.render(initialState, { status: "connecting", failures: 0, slow: true });
+    expect(hidden()).toBe(false);
+    a.hud.render(initialState, { status: "disconnected", failures: 1, slow: true });
+    expect(hidden()).toBe(false);
     a.hud.render(initialState, connected);
-    expect(a.root.querySelector(".install")!.hasAttribute("hidden")).toBe(true);
+    expect(hidden()).toBe(true);
     const b = setup(false);
-    b.hud.render(initialState, { status: "disconnected", failures: 3 });
+    b.hud.render(initialState, { status: "connecting", failures: 3, slow: true });
     expect(b.root.querySelector(".install")!.hasAttribute("hidden")).toBe(true);
   });
   it("install panel has the one-liner, run command and agent link", () => {
@@ -111,7 +115,7 @@ describe("hud", () => {
   });
   it("shows no Cancel and no 'tracing' while running but disconnected", () => {
     const { root, hud } = setup();
-    hud.render(running, { status: "disconnected", failures: 1 });
+    hud.render(running, { status: "disconnected", failures: 1, slow: true });
     const btn = root.querySelector<HTMLButtonElement>("button.trace")!;
     expect(btn.textContent).toBe("Trace");
     expect(btn.disabled).toBe(true);

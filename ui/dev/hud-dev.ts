@@ -26,5 +26,5 @@ const install = new URLSearchParams(location.search).has("install");
 const hud = mount(document.getElementById("hud-root")!, {
   onTrace: () => {}, onCancel: () => {}, onFocusHop: () => {}, onDive: () => {}, onSurface: () => {},
 }, { hosted: true });
-hud.render(install ? initialState : state, install ? { status: "disconnected", failures: 2 } : { status: "connected", failures: 0 });
+hud.render(install ? initialState : state, install ? { status: "disconnected", failures: 2, slow: true } : { status: "connected", failures: 0, slow: false });
 hud.setFocus(5);

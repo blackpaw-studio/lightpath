@@ -125,7 +125,7 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
       status.textContent = summary(state, connected);
       error.hidden = state.error === null;
       error.textContent = state.error?.message ?? "";
-      install.hidden = !(opts.hosted && conn.status !== "connected" && conn.failures > 0);
+      install.hidden = !(opts.hosted && conn.status !== "connected" && conn.slow);
       sheet.classList.toggle("empty", state.hops.length === 0);
       list.replaceChildren(...state.hops.map((hop) => hopRow(doc, hop, focusHop)));
       spark.replaceChildren(...(state.hops.length > 1 ? [sparkline(doc, state.hops.map((x) => x.probes))] : []));

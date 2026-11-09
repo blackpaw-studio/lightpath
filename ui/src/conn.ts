@@ -3,11 +3,20 @@ import { parseServerMsg, type ClientMsg, type ServerMsg } from "./protocol";
 export const AGENT_PORT = 47800;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 8000;
+/** A first dial still pending after this long counts as "no agent here" for the UI. */
+export const SLOW_MS = 1500;
 
 export interface ConnState {
   readonly status: "connecting" | "connected" | "disconnected";
   /** Consecutive failures since the last successful open. */
   readonly failures: number;
+  /**
+   * The agent is not answering: set by the first error/close, or by the first
+   * dial staying pending for SLOW_MS (a hung socket never fires close, e.g. a
+   * pending Local Network Access prompt, or WebKit refusing the hosted page's
+   * loopback socket with an error and no close). Cleared on open.
+   */
+  readonly slow: boolean;
 }
 
 export interface LocationLike {
@@ -51,16 +60,34 @@ export const connect = (opts: ConnOptions): Connection => {
   let failures = 0;
   let stopped = false;
   let isOpen = false;
+  let slow = false;
+  let slowTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const emit = (status: ConnState["status"]): void => opts.onState({ status, failures, slow });
+  const clearSlowTimer = (): void => {
+    if (slowTimer !== null) clearTimeout(slowTimer);
+    slowTimer = null;
+  };
+  const markSlow = (): void => {
+    clearSlowTimer();
+    if (slow || stopped) return;
+    slow = true;
+    emit("connecting"); // only reachable while a dial is pending
+  };
 
   const dial = (): void => {
     timer = null;
-    opts.onState({ status: "connecting", failures });
+    emit("connecting");
     const ws = new Impl(opts.url);
     socket = ws;
+    // Never close the hung socket: that could cancel a pending LNA prompt.
+    if (!slow) slowTimer = setTimeout(markSlow, SLOW_MS);
     ws.onopen = () => {
+      clearSlowTimer();
       isOpen = true;
       failures = 0;
-      opts.onState({ status: "connected", failures });
+      slow = false;
+      emit("connected");
     };
     ws.onmessage = (e: MessageEvent<string>) => {
       try {
@@ -73,14 +100,17 @@ export const connect = (opts: ConnOptions): Connection => {
       if (socket !== ws) return;
       socket = null;
       isOpen = false;
+      clearSlowTimer();
       if (stopped) return;
       const delay = backoffDelay(failures);
       failures += 1;
-      opts.onState({ status: "disconnected", failures });
+      slow = true;
+      emit("disconnected");
       timer = setTimeout(dial, delay);
     };
     ws.onerror = () => {
-      /* onclose follows and drives the retry */
+      // onclose normally follows and drives the retry; some browsers never send it.
+      if (socket === ws && !isOpen) markSlow();
     };
   };
   dial();
@@ -93,6 +123,7 @@ export const connect = (opts: ConnOptions): Connection => {
     },
     close: () => {
       stopped = true;
+      clearSlowTimer();
       if (timer !== null) clearTimeout(timer);
       const ws = socket;
       socket = null;
