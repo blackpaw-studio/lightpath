@@ -50,6 +50,7 @@ test("reachable: a named gap, a destination row, and an estimated arc and gate",
     "Cloudflare · Newark",
     "Destination · Cloudflare · San Francisco · 9 ms",
   ]);
+  await expectShot(page, "globe-quiet-done-1280.png"); // before any row is expanded
   const dest = page.locator(".hop.destination");
   await expect(dest.locator(".subtitle")).toHaveText("Answers directly; routers near it stay quiet.");
   await dest.getByRole("button").click();
@@ -60,7 +61,6 @@ test("reachable: a named gap, a destination row, and an estimated arc and gate",
   expect(poseIds(last)).toContain(String(DESTINATION_TTL));
   expect(last.entities[String(DESTINATION_TTL)]!.visible).toBe(true);
   expect(last.entities[`g:${DESTINATION_TTL}`]?.visible).toBe(true);
-  await expectShot(page, "globe-quiet-done-1280.png");
 });
 
 test("reachable: the tunnel's last gate is the destination", async ({ page }) => {
