@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Group, Sprite, Texture } from "three";
 import type { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { estimatePositions } from "../estimate";
 import { latLonToVec3, slerpGreatCircle } from "../geo";
 import { createArcs, type ArcInfo } from "./arcs";
 import type { Pose } from "./globePoses";
@@ -70,6 +71,23 @@ describe("createArcs", () => {
     const dir = radii.slice(1).map((r, i) => r - radii[i]!).filter((d) => Math.abs(d) > 1e-6);
     expect(dir.slice(1).filter((d, i) => Math.sign(d) !== Math.sign(dir[i]!))).toHaveLength(1);
     expect(Math.min(...radii)).toBeGreaterThanOrEqual(1 - 1e-6);
+  });
+
+  it("still forms one hump for hops whose delays fall outside their anchors' (slow routers)", () => {
+    const parent = new Group();
+    const arcs = createArcs(parent, () => new Texture());
+    const a = latLonToVec3(40.7, -74), b = latLonToVec3(51.5, -0.1);
+    const placed = estimatePositions(
+      [{ ttl: 2, rttMs: 18 }, { ttl: 3, rttMs: 19 }], [{ ttl: 1, pos: a, rttMs: 20 }, { ttl: 4, pos: b, rttMs: 30 }], a,
+    );
+    const at = (pos: Pose["pos"]): Pose => ({ pos, scale: 1, opacity: 1 });
+    const poses = new Map([[1, at(a)], [2, at(placed.get(2)!)], [3, at(placed.get(3)!)], [4, at(b)]]);
+    const infos: ArcInfo[] = [1, 2, 3].map((from) => ({ from, to: from + 1, colorFrom: "#ffffff", colorTo: "#22e6ff", estimated: true }));
+    arcs.update(shaped(poses, [1, 4]), infos, 0, true, 1);
+    const radii = radiiOf(parent).flat();
+    expect(radii.every(Number.isFinite)).toBe(true);
+    const dir = radii.slice(1).map((r, i) => r - radii[i]!).filter((d) => Math.abs(d) > 1e-6);
+    expect(dir.slice(1).filter((d, i) => Math.sign(d) !== Math.sign(dir[i]!))).toHaveLength(1);
   });
 
   const radiiOf = (parent: Group): number[][] =>

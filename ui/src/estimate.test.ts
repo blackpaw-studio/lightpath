@@ -52,10 +52,46 @@ describe("estimatePositions by reply delay", () => {
     expect(fraction(place([{ ttl: 3, rttMs: 50 }], flat).get(3)!)).toBeCloseTo(0.25, 9);
   });
 
-  it("clamps a delay outside the anchors' range onto the nearer anchor", () => {
-    const p = place([{ ttl: 3, rttMs: 200 }, { ttl: 4, rttMs: 250 }]);
-    expect(fraction(p.get(3)!)).toBeCloseTo(1, 9);
-    expect(fraction(place([{ ttl: 3, rttMs: 2 }]).get(3)!)).toBeCloseTo(0, 9);
+  it("places a hop whose delay is outside the anchors' range by ttl, not on the nearer anchor", () => {
+    const p = place([{ ttl: 3, rttMs: 200 }, { ttl: 4, rttMs: 250 }, { ttl: 5, rttMs: 2 }]);
+    expect([3, 4, 5].map((t) => fraction(p.get(t)!))).toEqual([0.25, 0.5, 0.75].map((f) => expect.closeTo(f, 9)));
+  });
+
+  describe("slow routers (delays outside the anchors' range)", () => {
+    const close = [{ ttl: 2, pos: NY, rttMs: 20 }, { ttl: 6, pos: LONDON, rttMs: 30 }];
+    const fractions = (hops: { ttl: number; rttMs: number | null }[], a = close): number[] => {
+      const p = place(hops, a);
+      return hops.map((h) => fraction(p.get(h.ttl)!));
+    };
+
+    it("spreads hops at 18 and 19 ms between anchors at 20 and 30 ms, distinct and in order", () => {
+      const f = fractions([{ ttl: 3, rttMs: 18 }, { ttl: 4, rttMs: 19 }, { ttl: 5, rttMs: 19.5 }]);
+      expect(f).toEqual([0.25, 0.5, 0.75].map((x) => expect.closeTo(x, 9)));
+    });
+
+    it("keeps in-range hops with near-identical delays a minimum gap apart (a quarter of the ttl step)", () => {
+      const f = fractions([{ ttl: 3, rttMs: 20.1 }, { ttl: 4, rttMs: 20.1 }, { ttl: 5, rttMs: 20.2 }]);
+      const gap = 0.25 / 4;
+      expect(f[1]! - f[0]!).toBeGreaterThanOrEqual(gap - 1e-9);
+      expect(f[2]! - f[1]!).toBeGreaterThanOrEqual(gap - 1e-9);
+      expect(f[0]).toBeCloseTo(0.01, 9); // still next to the near anchor, as its delay says
+    });
+
+    it("rescales a run crowded against the far anchor to stay inside [0,1], in order and finite", () => {
+      const f = fractions([{ ttl: 3, rttMs: 29.9 }, { ttl: 4, rttMs: 29.95 }, { ttl: 5, rttMs: 29.99 }]);
+      expect(f.every((x) => Number.isFinite(x) && x >= 0 && x <= 1)).toBe(true);
+      expect(f[1]!).toBeGreaterThan(f[0]!);
+      expect(f[2]!).toBeGreaterThan(f[1]!);
+      expect(f[2]!).toBeLessThan(1);
+    });
+
+    it("never produces NaN, even for a lone hop at the far anchor's delay or equal anchor delays", () => {
+      const flat = [{ ttl: 2, pos: NY, rttMs: 20 }, { ttl: 6, pos: LONDON, rttMs: 20 }];
+      for (const [hops, a] of [[[{ ttl: 3, rttMs: 30 }], close], [[{ ttl: 3, rttMs: 20 }, { ttl: 4, rttMs: 20 }], flat], [[{ ttl: 3, rttMs: 29.999 }], close]] as const) {
+        const p = place([...hops], a);
+        for (const h of hops) expect(p.get(h.ttl)!.every(Number.isFinite)).toBe(true);
+      }
+    });
   });
 
   it("keeps a run monotonic: a faster hop later in the path never lands behind its predecessor", () => {
