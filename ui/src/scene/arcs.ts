@@ -9,6 +9,7 @@ import type { Vec3 } from "../geo";
 import { writeArcPoints } from "./arcGeometry";
 import type { PoseMap } from "./globePoses";
 import { glowTexture } from "./glow";
+import type { DrawnMark } from "./marks";
 import { PULSE_MS, pulseHead, pulseIntensity } from "./pulse";
 
 /** An arc from hop `from` to hop `to` (keys into the PoseMap). */
@@ -25,6 +26,8 @@ export interface Arcs {
   /** Endpoints come only from `poses`; arcs are keyed by `to` within a trace `generation`. */
   update(poses: PoseMap, arcs: readonly ArcInfo[], nowMs: number, reducedMotion: boolean, generation: number): void;
   setResolution(width: number, height: number, pixelRatio: number): void;
+  /** The crest of each drawn arc this frame, keyed by the ttl it ends at (trace entities). */
+  crests(): ReadonlyMap<number, DrawnMark>;
   /** Global fade (the tunnel lane fades globe arcs out). */
   setOpacity(o: number): void;
   dispose(): void;
@@ -48,7 +51,10 @@ interface Entry {
   readonly distBuf: InstancedInterleavedBuffer;
   readonly head: Sprite;
   readonly bornAt: number;
+  readonly to: number;
   readonly seed: number;
+  /** Crest as last drawn; null while the arc is hidden. */
+  crest: DrawnMark | null;
   estimated: boolean;
   /** Parsed endpoint colours, re-parsed only when the hex strings change. */
   readonly colorFrom: Color;
@@ -82,7 +88,7 @@ const makeEntry = (to: number, nowMs: number, estimated: boolean, texture: Textu
     map: texture, blending: AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false,
   }));
   head.renderOrder = 4;
-  return { line, material, pos, col, dist, posBuf, colBuf, distBuf, head, bornAt: nowMs, seed: (to * 0.381966) % 1, estimated,
+  return { line, material, pos, col, dist, posBuf, colBuf, distBuf, head, bornAt: nowMs, to, crest: null, seed: (to * 0.381966) % 1, estimated,
     colorFrom: new Color(), colorTo: new Color(), colorKey: "" };
 };
 
@@ -92,6 +98,20 @@ const angleBetween = (a: Vec3, b: Vec3): number => {
   const cy = a[2] * b[0] - a[0] * b[2];
   const cz = a[0] * b[1] - a[1] * b[0];
   return Math.atan2(Math.hypot(cx, cy, cz), a[0] * b[0] + a[1] * b[1] + a[2] * b[2]);
+};
+
+/**
+ * The arc's crest, for tracing: the direction of its middle vertex at the radius of its highest vertex.
+ * Both follow the shape continuously (the highest vertex's own position can hop between two near-equal
+ * peaks, or wander on a flat arc), and a jump in the hump's height or extent moves it.
+ */
+const crestOf = (pts: Float32Array): Vec3 => {
+  const radius = (v: number): number => Math.hypot(pts[v * 3]!, pts[v * 3 + 1]!, pts[v * 3 + 2]!);
+  let top = 0;
+  for (let v = 1; v <= SEGMENTS; v++) top = Math.max(top, radius(v));
+  const m = SEGMENTS >> 1;
+  const k = top / radius(m);
+  return [pts[m * 3]! * k, pts[m * 3 + 1]! * k, pts[m * 3 + 2]! * k];
 };
 
 export const createArcs = (parent: Object3D, texture: () => Texture = glowTexture): Arcs => {
@@ -115,7 +135,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
     entries.delete(k);
   };
 
-  const fill = (e: Entry, a: Vec3, b: Vec3, info: ArcInfo, nowMs: number, reducedMotion: boolean, alpha: number): void => {
+  const fill = (e: Entry, a: Vec3, b: Vec3, info: ArcInfo, poses: PoseMap, nowMs: number, reducedMotion: boolean, alpha: number): void => {
     const key = info.colorFrom + info.colorTo;
     if (key !== e.colorKey) {
       e.colorFrom.set(info.colorFrom);
@@ -126,7 +146,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
     const age = nowMs - e.bornAt;
     const opts = { reducedMotion, estimated: info.estimated, seed: e.seed };
     const gain = alpha * ARC_GAIN;
-    writeArcPoints(pts, a, b, SEGMENTS);
+    writeArcPoints(pts, a, b, SEGMENTS, undefined, poses.get(info.to)?.arcIn);
     // Per-vertex colour = endpoint gradient × pulse brightness, computed once per vertex.
     for (let v = 0; v <= SEGMENTS; v++) {
       const u = v / SEGMENTS;
@@ -148,6 +168,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
       acc += Math.hypot(pts[s1]! - pts[s0]!, pts[s1 + 1]! - pts[s0 + 1]!, pts[s1 + 2]! - pts[s0 + 2]!);
       e.dist[i * 2 + 1] = acc;
     }
+    e.crest = { pos: crestOf(pts), alpha };
     e.posBuf.needsUpdate = true;
     e.colBuf.needsUpdate = true;
     e.distBuf.needsUpdate = true;
@@ -189,15 +210,17 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
         e.line.visible = !degenerate;
         if (degenerate) {
           e.head.visible = false;
+          e.crest = null;
           continue;
         }
-        fill(e, a.pos, b.pos, info, nowMs, reducedMotion, Math.min(a.opacity, b.opacity) * globalOpacity);
+        fill(e, a.pos, b.pos, info, poses, nowMs, reducedMotion, Math.min(a.opacity, b.opacity) * globalOpacity);
       }
     },
     setResolution: (w, h, dpr) => {
       resolution = { w, h, dpr };
       entries.forEach(applyResolution);
     },
+    crests: () => new Map([...entries.values()].flatMap((e) => (e.crest && e.line.visible ? [[e.to, e.crest] as const] : []))),
     setOpacity: (o) => { globalOpacity = o; },
     dispose: () => entries.forEach((e, k) => remove(k, e)),
   };

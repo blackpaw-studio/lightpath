@@ -32,6 +32,10 @@ describe("shortNetworkName: curated table", () => {
     ["Facebook, Inc.", 32934, "Meta"],
     ["Meta Platforms, Inc.", null, "Meta"],
     ["Apple Inc.", null, "Apple"],
+    ["PCCWG-APAC-HK - PCCW Global, Inc., HK", null, "PCCW Global"],
+    ["PCCW Global, Inc.", 3491, "PCCW Global"],
+    ["YANDEX - YANDEX LLC, RU", 13238, "Yandex"],
+    ["YANDEX - YANDEX LLC, RU", null, "Yandex"],
   ])("%s (AS%s) → %s", (org, asn, expected) => {
     expect(shortNetworkName(org, asn)).toBe(expected);
   });
@@ -55,7 +59,9 @@ describe("shortNetworkName: cleanup heuristic", () => {
   it.each([
     ["AS15133 EDGECAST", "Edgecast"],
     ["AS64500 Example Telecom Inc.", "Example Telecom"],
-    ["EXAMPLE-NET - Example Networks, LLC", "Example-Net"],
+    ["EXAMPLE-NET - Example Networks, LLC", "Example"],
+    ["QRSTUV-AS-AP - Quartz Fibre Ltd, AU", "Quartz Fibre"],
+    ["HANDLE-ONLY - , US", "Handle-Only"],
     ["Foo Bar Communications, US", "Foo Bar"],
     ["Acme Networks Ltd", "Acme"],
     ["DigitalOcean, LLC", "DigitalOcean"],

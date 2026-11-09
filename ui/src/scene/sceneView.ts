@@ -13,7 +13,8 @@ import { createCrossfade, crossfadeOpacity, crossfadeTrace } from "./crossfade";
 import { createGates } from "./gates";
 import { createGlobeView, type GlobeView, type GlobeViewOptions } from "./globe";
 import { createGlobePoseSource, ORIGIN_KEY, type PoseMap } from "./globePoses";
-import { markEntities } from "./marks";
+import { arcEntities, markEntities } from "./marks";
+import type { Rect } from "./safeArea";
 import { TUBE_R, createTunnel } from "./tunnel";
 import { createTunnelController } from "./tunnelController";
 import { REDUCED_MS, type CameraPose, type ViewMode } from "./transition";
@@ -39,6 +40,8 @@ export interface SceneView extends Steppable {
   readonly globe: GlobeView;
   setState(state: TraceState): void;
   resize(width: number, height: number, pixelRatio: number): void;
+  /** The HUD panels' rects, so the globe is framed in the area they leave free. */
+  setOcclusion(panels: readonly Rect[]): void;
   /** Globe → tunnel. False when there is nothing to dive into yet (no origin). */
   dive(): boolean;
   /** Tunnel → globe (also reverses a dive in progress). */
@@ -106,7 +109,9 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
   const liveTrace = (): TraceFrame => {
     const t = globe.trace();
     const rigCut = t.cut === true && ctl.mode() === "globe";
-    const entities = { ...t.entities, ...markEntities(globe.nodeMarks(), gates.marks(), globe.project) };
+    // Arc shapes are traced on the globe only: the tunnel flight retires them while the poses fly.
+    const arcs = ctl.mode() === "globe" ? arcEntities(globe.arcMarks(), globe.project) : {};
+    const entities = { ...t.entities, ...arcs, ...markEntities(globe.nodeMarks(), gates.marks(), globe.project) };
     return { ...t, entities, cut: rigCut || ctl.cut() };
   };
 
@@ -125,6 +130,8 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
       if (ctl.cut()) [snapshot, cutAt] = [liveTrace(), nowMs];
       const mode = ctl.mode();
       globe.setRotationPaused(mode !== "globe");
+      // The free-area offset belongs to the globe shot: it fades out as the tunnel takes the camera.
+      globe.rig.setOffsetScale(1 - ctl.viewT());
       applyFades();
       globe.update(dtMs, nowMs);
       // globe.update ran the rig: its camera now holds the rig pose the flight starts from.
@@ -166,6 +173,7 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
       labels.setSize(w, h);
       if (pose) place(pose);
     },
+    setOcclusion: (panels) => globe.setOcclusion(panels),
     dive: () => ctl.dive(),
     surface: () => ctl.surface(),
     focusHop: (ttl) => {
@@ -174,7 +182,7 @@ export const createSceneView = (opts: SceneViewOptions): SceneView => {
       const p = ctl.poses().get(ttl);
       const o = ctl.poses().get(ORIGIN_KEY);
       if (!p) return false;
-      globe.rig.frame(o && ttl !== ORIGIN_KEY ? [o.pos, p.pos] : [p.pos], opts.reducedMotion);
+      globe.frameWorld(o && ttl !== ORIGIN_KEY ? [o.pos, p.pos] : [p.pos]);
       return true;
     },
     mode: () => ctl.mode(),

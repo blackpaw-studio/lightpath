@@ -16,6 +16,6 @@
     {"t": 2700, "event": {"type":"hop","ttl":11,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
     {"t": 2950, "event": {"type":"hop","ttl":12,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
     {"t": 3200, "event": {"type":"hop","ttl":13,"probes":[{"ip":null,"rttMs":null},{"ip":null,"rttMs":null},{"ip":null,"rttMs":null}],"ip":null,"host":null,"asn":null,"org":null,"lat":null,"lon":null,"city":null,"geoSource":"estimated","annotations":[]}},
-    {"t": 3600, "event": {"type":"trace.done","reached":false,"reason":"quiet","destination":{"ip":"104.16.1.1","reachable":true,"port":443,"rttMs":9.2,"host":null,"asn":13335,"org":"CLOUDFLARENET - Cloudflare, Inc., US","lat":37.77,"lon":-122.42,"city":"San Francisco","geoSource":"api"}}}
+    {"t": 3600, "event": {"type":"trace.done","reached":false,"reason":"quiet","destination":{"ip":"104.16.1.1","reachable":true,"port":443,"rttMs":62.4,"host":null,"asn":13335,"org":"CLOUDFLARENET - Cloudflare, Inc., US","lat":37.77,"lon":-122.42,"city":"San Francisco","geoSource":"api"}}}
   ]
 }

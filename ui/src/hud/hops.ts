@@ -1,11 +1,13 @@
 import type { Destination, GeoSource, Probe } from "../protocol";
 import { meanRtt, rttColor } from "../color";
+import type { LocationDoubt } from "../plausibility";
 import { shortNetworkName } from "./network";
 import { delayText, hasSolidLocation, medianRtt, placeLabel, type Row } from "./rows";
 
 export const QUIET_SUBTITLE = "Many networks hide their routers; the path continues.";
 export const STOPPED_SUBTITLE = "The trace stopped here; the destination didn't answer.";
 export const DESTINATION_SUBTITLE = "Answers directly; routers near it stay quiet.";
+export const UNANSWERING_SUBTITLE = "Doesn't answer traces; the last stretch is estimated from its IP location.";
 export const END_TITLE = "The destination doesn't answer traces";
 
 export interface RowHandlers {
@@ -29,6 +31,10 @@ const SOURCE_TEXT: Readonly<Record<GeoSource, string>> = {
   local: "Measured (local)",
   estimated: "Estimated",
 };
+
+/** Why a database location was dropped. The wire carries a city, not a country. */
+export const doubtText = (d: LocationDoubt): string =>
+  `IP database says ${d.place ?? "somewhere far away"}, but a ${delayText(d.rttMs)} reply can't come from that far.`;
 
 const asnText = (h: { asn: number | null; org: string | null }): string | null => {
   const text = [h.asn === null ? null : "AS" + h.asn, h.org].filter((x): x is string => x !== null && x !== "").join(" ");
@@ -112,11 +118,11 @@ export const hopRowEl = (doc: Document, row: HopRow, expanded: boolean, h: RowHa
     ["Host", hop.host],
     ["Network", asnText(hop)],
     ["Replies", rttText(hop.probes)],
-    ["Location", SOURCE_TEXT[hop.geoSource]],
+    ["Location", row.doubt ? "Estimated. " + doubtText(row.doubt) : SOURCE_TEXT[hop.geoSource]],
   ]);
   const li = assemble(
     doc, row.key, "hop",
-    [dot, el(doc, "span", "place", placeLabel(hop)), el(doc, "span", "delay", rtt === null ? "" : delayText(rtt))],
+    [dot, el(doc, "span", "place", placeLabel(hop, row.doubt !== undefined)), el(doc, "span", "delay", rtt === null ? "" : delayText(rtt))],
     detail, expanded, () => h.onFocus(hop.ttl), h,
   );
   li.dataset.ttl = String(hop.ttl);
@@ -144,26 +150,31 @@ export const quietRowEl = (
   return li;
 };
 
-const destinationPlace = (d: Destination): string => {
-  const place = d.city === null ? null : (d.geoSource === "estimated" ? "≈ " : "") + d.city;
+const destinationPlace = (d: Destination, answers: boolean, doubted: boolean): string => {
+  // A destination that does not answer is placed from its IP location alone: always an estimate.
+  const place = d.city === null ? (doubted ? "≈" : null) : (d.geoSource === "estimated" || !answers ? "≈ " : "") + d.city;
   return [
     "Destination", shortNetworkName(d.org, d.asn), place, d.rttMs === null ? null : delayText(d.rttMs),
   ].filter((x): x is string => x !== null).join(" · ");
 };
 
-/** The end of a quiet finish that answers over TCP. Focuses its scene entry when the scene has one. */
+/** The end of a quiet finish that answers over TCP, or is located without answering. Focuses its scene entry when the scene has one. */
 export const destinationRowEl = (doc: Document, row: DestinationRow, expanded: boolean, h: RowHandlers): HTMLElement => {
   const d = row.destination;
   const dot = el(doc, "span", "dot hollow");
   dot.setAttribute("aria-hidden", "true");
   const text = el(doc, "span", "dest-text");
-  text.append(el(doc, "span", "place", destinationPlace(d)), el(doc, "span", "subtitle", DESTINATION_SUBTITLE));
+  text.append(
+    el(doc, "span", "place", destinationPlace(d, row.answers, row.doubt !== undefined)),
+    el(doc, "span", "subtitle", row.answers ? DESTINATION_SUBTITLE : UNANSWERING_SUBTITLE),
+  );
   const detail = detailList(doc, [
     ["IP", d.ip],
     ["Host", d.host],
     ["Network", asnText(d)],
     ["Reached via", d.port === null ? null : "TCP port " + d.port],
     ["Delay", d.rttMs === null ? null : delayText(d.rttMs)],
+    ["Location", row.doubt ? "Estimated. " + doubtText(row.doubt) : null],
   ]);
   const li = assemble(
     doc, row.key, "hop destination", [dot, text], detail, expanded,

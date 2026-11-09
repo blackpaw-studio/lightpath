@@ -266,3 +266,47 @@ describe("destination row focus", () => {
   });
 });
 
+describe("hud.observeOcclusion", () => {
+  const stub = (el: Element, left: number, top: number, right: number, bottom: number): void => {
+    el.getBoundingClientRect = () => ({ left, top, right, bottom, width: right - left, height: bottom - top, x: left, y: top, toJSON: () => ({}) });
+  };
+
+  it("reports each visible panel's rect now, and again only when one changes (on resize)", () => {
+    const { root, hud } = setup();
+    const [form, , sheet] = root.querySelectorAll(".panel");
+    stub(form!, 16, 16, 396, 110);
+    stub(sheet!, 16, 122, 396, 704);
+    const seen: unknown[] = [];
+    hud.observeOcclusion((rects) => seen.push(rects));
+    expect(seen).toEqual([[
+      { left: 16, top: 16, right: 396, bottom: 110 },
+      { left: 16, top: 122, right: 396, bottom: 704 },
+    ]]);
+    window.dispatchEvent(new Event("resize")); // nothing moved
+    expect(seen).toHaveLength(1);
+    stub(sheet!, 16, 122, 396, 500);
+    window.dispatchEvent(new Event("resize"));
+    expect(seen).toHaveLength(2);
+    expect((seen[1] as { bottom: number }[])[1]!.bottom).toBe(500);
+  });
+
+  it("leaves out panels that have no size (hidden)", () => {
+    const { root, hud } = setup();
+    stub(root.querySelector(".controls")!, 16, 16, 396, 110);
+    const seen: unknown[][] = [];
+    hud.observeOcclusion((rects) => seen.push([...rects]));
+    expect(seen[0]).toHaveLength(1); // the install panel and the sheet measure 0×0 in jsdom
+  });
+
+  it("stops reporting once unsubscribed", () => {
+    const { root, hud } = setup();
+    stub(root.querySelector(".controls")!, 16, 16, 396, 110);
+    const cb = vi.fn();
+    const stop = hud.observeOcclusion(cb);
+    stop();
+    stub(root.querySelector(".controls")!, 16, 16, 300, 110);
+    window.dispatchEvent(new Event("resize"));
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+});
+

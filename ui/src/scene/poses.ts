@@ -19,7 +19,7 @@ export const blendPoses = (globe: PoseMap, gates: ReadonlyMap<number, Vec3>, vie
   const morph = smoothstep(MORPH[0], MORPH[1], viewT);
   return new Map([...globe].map(([k, g]) => {
     const gate = gates.get(k);
-    return [k, { pos: gate ? lerp3(g.pos, gate, flight) : g.pos, scale: g.scale, opacity: g.opacity, morph }] as const;
+    return [k, { pos: gate ? lerp3(g.pos, gate, flight) : g.pos, scale: g.scale, opacity: g.opacity, morph, ...(g.arcIn ? { arcIn: g.arcIn } : {}) }] as const;
   }));
 };
 

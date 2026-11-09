@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 import { FIXTURES } from "./e2e/agents";
 
 // One replay agent per fixture (the agent replays a single file), on
-// LIGHTPATH_E2E_PORT_BASE + 0..4 (default 47811). Build the
+// LIGHTPATH_E2E_PORT_BASE + 0..6 (default 47811). Build the
 // binary first: `make build` (or `make e2e`, which builds and runs this).
 //
 // Browsers: Chromium and WebKit run on the shared Apollo server when

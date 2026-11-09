@@ -48,6 +48,15 @@ describe("hop row", () => {
     expect(hollow.querySelector(".dot")!.classList.contains("hollow")).toBe(true);
     expect(hollow.querySelector(".place")!.textContent).toBe("Cloudflare · ≈ San Francisco");
   });
+  it("explains a location the reply delay ruled out, with a hollow dot and a bare ≈", () => {
+    const doubted = hop({ geoSource: "estimated", lat: null, lon: null, city: null });
+    const el = hopRowEl(
+      document, { kind: "hop", key: "h3", hop: doubted, doubt: { place: "Brisbane", rttMs: 10 } }, false, handlers(),
+    );
+    expect(el.querySelector(".dot")!.classList.contains("hollow")).toBe(true);
+    expect(el.querySelector(".place")!.textContent).toBe("Cloudflare · ≈");
+    expect(details(el).textContent).toContain("IP database says Brisbane, but a 10 ms reply can't come from that far.");
+  });
   it("names private hops plainly", () => {
     expect(hopRow(hop({ ttl: 1, ip: "192.168.1.1", asn: null, org: null, city: null })).querySelector(".place")!.textContent)
       .toBe("Your router");
@@ -178,8 +187,8 @@ const dest: Destination = {
   ip: "104.16.1.1", reachable: true, port: 443, rttMs: 18.4, host: "edge.example.net", asn: 13335, org: "CLOUDFLARENET",
   lat: 40.7, lon: -74, city: "New York", geoSource: "api",
 };
-const destRow = (d: Destination, ttl: number | null, hs = handlers()) =>
-  destinationRowEl(document, { kind: "destination", key: "dest", destination: d, ttl, ttls: [5, 6, 7] }, false, hs);
+const destRow = (d: Destination, ttl: number | null, hs = handlers(), answers = true) =>
+  destinationRowEl(document, { kind: "destination", key: "dest", destination: d, ttl, ttls: [5, 6, 7], answers }, false, hs);
 
 describe("destination row", () => {
   it("reads Destination · network · place · delay with the direct-answer note", () => {
@@ -224,6 +233,37 @@ describe("destination row", () => {
   });
 });
 
+describe("destination row with a location the reply delay ruled out", () => {
+  const placed: Destination = { ...dest, lat: null, lon: null, city: null, geoSource: "estimated" };
+  const el = () => destinationRowEl(
+    document,
+    { kind: "destination", key: "dest", destination: placed, ttl: 8, ttls: [], answers: true, doubt: { place: "San Francisco", rttMs: 9.2 } },
+    false, handlers(),
+  );
+  it("explains why in its details and marks the missing place with ≈", () => {
+    expect(details(el()).textContent).toContain("IP database says San Francisco, but a 9 ms reply can't come from that far.");
+    expect(el().querySelector(".place")!.textContent).toBe("Destination · Cloudflare · ≈ · 18 ms");
+  });
+});
+
+describe("destination row that does not answer", () => {
+  const silent: Destination = { ...dest, reachable: false, port: null, rttMs: null, host: null, geoSource: "api" };
+  it("reads Destination · network · ≈ place with no delay, and says the last stretch is estimated", () => {
+    const el = destRow(silent, 8, handlers(), false);
+    expect(el.querySelector(".place")!.textContent).toBe("Destination · Cloudflare · ≈ New York");
+    expect(el.querySelector(".subtitle")!.textContent).toBe("Doesn't answer traces; the last stretch is estimated from its IP location.");
+    expect(el.querySelector(".subtitle")!.textContent).not.toContain("home");
+  });
+  it("lists no TCP port or delay and still focuses its scene entry", () => {
+    const hs = handlers();
+    const el = destRow(silent, 8, hs, false);
+    expect(details(el).textContent).not.toContain("TCP");
+    expect(details(el).textContent).not.toContain("Delay");
+    head(el).click();
+    expect(hs.onFocus).toHaveBeenCalledWith(8);
+  });
+});
+
 describe("closing row", () => {
   const end = (hs = handlers()) =>
     endRowEl(document, { kind: "end", key: "end", ttls: [3, 4], pastLabel: "Verizon · New York", destination: null }, false, hs);
@@ -243,6 +283,6 @@ describe("closing row", () => {
   it("rowEl dispatches every row kind", () => {
     const hs = handlers();
     expect(rowEl(document, { kind: "end", key: "end", ttls: [], pastLabel: "x", destination: null }, false, hs).dataset.key).toBe("end");
-    expect(rowEl(document, { kind: "destination", key: "dest", destination: dest, ttl: 2, ttls: [] }, false, hs).dataset.key).toBe("dest");
+    expect(rowEl(document, { kind: "destination", key: "dest", destination: dest, ttl: 2, ttls: [], answers: true }, false, hs).dataset.key).toBe("dest");
   });
 });

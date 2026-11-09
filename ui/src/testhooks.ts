@@ -28,6 +28,8 @@ export interface TestHooks {
   mode?(): string;
   /** 0 = globe … 1 = tunnel. */
   viewT?(): number;
+  /** The camera's world position (the facing check needs it). */
+  cameraPosition?(): Vec3;
 }
 
 export interface Projection {

@@ -18,6 +18,7 @@ import { createLandDots } from "./landdots";
 import type { DrawnMark } from "./marks";
 import { globeLayout, type GlobeLayout } from "./layout";
 import { createNodes, type NodeInfo } from "./nodes";
+import { safeRect, toNdc, type Rect } from "./safeArea";
 import { createStars } from "./stars";
 
 /** Idle rotation, rad/s, while no trace is running (none under reduced motion). */
@@ -41,11 +42,17 @@ export interface GlobeViewOptions {
 export interface GlobeView extends Steppable {
   setState(state: TraceState): void;
   resize(width: number, height: number, pixelRatio: number): void;
+  /** The HUD panels' rects (viewport CSS pixels): the camera frames the path in what they leave free. */
+  setOcclusion(panels: readonly Rect[]): void;
+  /** Frame these world-space points (as drawn, idle rotation included); the rig follows the globe's rotation after. */
+  frameWorld(points: readonly Vec3[]): void;
   /** Poses produced this frame (one source per frame). */
   poses(): PoseMap;
   trace(): TraceFrame;
   /** Each node's dot as drawn this frame (tracing). */
   nodeMarks(): ReadonlyMap<number, DrawnMark>;
+  /** Each arc's crest as drawn this frame, keyed by the ttl it ends at. */
+  arcMarks(): ReadonlyMap<number, DrawnMark>;
   /** World point → CSS-pixel screen position through the current camera. */
   project(p: Vec3): Projection;
   /** Replace the per-frame pose source (tunnel lane: wraps createGlobePoseSource). */
@@ -86,8 +93,8 @@ export const nodeInfos = (state: TraceState, layout: GlobeLayout): Map<number, N
   ]);
 };
 
-export const arcInfos = (layout: GlobeLayout): ArcInfo[] =>
-  layout.hops.map((h, i) => {
+export const arcInfos = (layout: GlobeLayout): ArcInfo[] => {
+  return layout.hops.map((h, i) => {
     const prev = layout.hops[i - 1];
     return {
       from: prev?.ttl ?? ORIGIN_KEY,
@@ -97,11 +104,11 @@ export const arcInfos = (layout: GlobeLayout): ArcInfo[] =>
       estimated: h.estimated || (prev?.estimated ?? false),
     };
   });
-
-const framingKey = (layout: GlobeLayout): string => {
-  const last = layout.hops[layout.hops.length - 1];
-  return [layout.origin?.join(",") ?? "", layout.hops.length, last?.ttl ?? "", last?.pos.map((x) => x.toFixed(3)).join(",") ?? ""].join("|");
 };
+
+/** Every drawn node's position (to 3 dp): the whole path drives the framing, not just the newest hop. */
+const framingKey = (layout: GlobeLayout): string =>
+  [layout.origin, ...layout.hops.map((h) => h.pos)].map((p) => p?.map((x) => x.toFixed(3)).join(",") ?? "").join("|");
 
 export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
   const renderer = new WebGLRenderer({ canvas: opts.canvas, antialias: true, powerPreference: "high-performance" });
@@ -144,6 +151,9 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
   let rotationPaused = false;
   /** A reduced-motion camera cut happened during the latest update. */
   let cutThisFrame = false;
+  /** A cut made between frames (the free area changed under reduced motion), reported by the next update. */
+  let pendingCut = false;
+  let panels: readonly Rect[] = [];
 
   const pixelWorld = (): number => {
     const cam = rig.camera;
@@ -160,13 +170,19 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     lightDir.copy(cam.position).normalize().addScaledVector(camRight, -0.7).addScaledVector(camUp, 0.6).normalize();
   };
 
+  const refreshSafeArea = (): void => {
+    const before = rig.camera.position.clone();
+    rig.setSafeRect(toNdc(safeRect(size, panels), size), opts.reducedMotion);
+    if (opts.reducedMotion && !before.equals(rig.camera.position)) pendingCut = true;
+  };
+
   const reframe = (): void => {
     const key = framingKey(layout);
     if (key === lastFraming) return;
     lastFraming = key;
     if (!layout.origin) return;
-    const pts: Vec3[] = [layout.origin, ...layout.hops.map((h) => h.pos)].map((p) => rotateY(p, rotation));
-    if (applyFraming(rig, pts, opts.reducedMotion)) {
+    const pts: Vec3[] = [layout.origin, ...layout.hops.map((h) => h.pos)];
+    if (applyFraming(rig, pts, opts.reducedMotion, pts.map((p) => rotateY(p, rotation)))) {
       cutThisFrame = true;
       fadeStart = now;
     }
@@ -195,10 +211,18 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     },
     update: (dtMs, nowMs) => {
       now = nowMs;
-      cutThisFrame = false;
+      cutThisFrame = pendingCut;
+      if (pendingCut) fadeStart = nowMs;
+      pendingCut = false;
       if (state.status !== "running" && !opts.reducedMotion && !rotationPaused) rotation += (IDLE_ROTATION * dtMs) / 1000;
       poses = poseSource({ layout, nowMs, dtMs, reducedMotion: opts.reducedMotion, rotationY: rotation });
+      // Reduced motion takes a change of arc shape at once: a declared cut, not an animation.
+      if (opts.reducedMotion && [...poses.values()].some((p) => p.arcIn?.snapped)) {
+        cutThisFrame = true;
+        fadeStart = nowMs;
+      }
       reframe();
+      rig.setYaw(rotation);
       rig.update(dtMs);
       updateLight();
       dots.mesh.rotation.y = rotation;
@@ -220,14 +244,21 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
       renderer.setPixelRatio(dpr);
       renderer.setSize(w, h, false);
       rig.resize(w / h);
+      refreshSafeArea();
       backdrop.setAspect(w / h);
       arcs.setResolution(w, h, dpr);
       stars.setPixelRatio(dpr);
       bloom.setSize(w, h);
     },
+    setOcclusion: (rects) => {
+      panels = rects;
+      refreshSafeArea();
+    },
+    frameWorld: (points) => rig.frame(points.map((p) => rotateY(p, -rotation)), opts.reducedMotion),
     poses: () => poses,
     trace: () => ({ ...projectFrame(now, poses, project), ...(cutThisFrame ? { cut: true } : {}) }),
     nodeMarks: () => nodes.marks(),
+    arcMarks: () => arcs.crests(),
     project,
     setPoseSource: (s) => { poseSource = s; },
     setGlobeOpacity: (o) => {

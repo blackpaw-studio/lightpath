@@ -4,6 +4,7 @@
 // into checkTrace entities, so a dot→ring handoff gap reads as flicker.
 //   g:<ttl>  the hop's marker: its node dot or its gate ring, whichever is drawn
 //   l:<ttl>  the gate's label, at its own anchor
+//   a:<ttl>  the arc into that hop: its crest (its shape jumping reads as a world jump)
 import type { Vec3 } from "../geo";
 import { VISIBLE_OPACITY, type Projection, type TracedEntity } from "../testhooks";
 
@@ -24,6 +25,10 @@ const entity = (m: DrawnMark, project: (p: Vec3) => Projection): TracedEntity =>
   const s = project(m.pos);
   return { x: s.x, y: s.y, visible: m.alpha > VISIBLE_OPACITY && s.inFrustum, opacity: m.alpha, world: m.pos };
 };
+
+/** The crest of each drawn globe arc, keyed by the ttl it ends at. */
+export const arcEntities = (crests: ReadonlyMap<number, DrawnMark>, project: (p: Vec3) => Projection): Record<string, TracedEntity> =>
+  Object.fromEntries([...crests].map(([to, m]) => [`a:${to}`, entity(m, project)]));
 
 export const markEntities = (
   dots: ReadonlyMap<number, DrawnMark>, gates: ReadonlyMap<number, GateMark>, project: (p: Vec3) => Projection,

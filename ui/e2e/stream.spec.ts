@@ -7,7 +7,7 @@ import { ORIGIN_KEY, rotateY } from "../src/scene/globePoses";
 import { FIXTURES } from "./agents";
 import { expectedRows } from "./fixtureHops";
 import {
-  byGeneration, ttlOf, expectSmooth, openApp, pathExtent, startTrace, state, stepLive, STREAM_MAX_JUMP_WORLD, traceOptions,
+  byGeneration, ttlOf, expectArcsSmooth, expectSmooth, openApp, pathExtent, startTrace, state, stepLive, STREAM_MAX_JUMP_WORLD, traceOptions,
 } from "./harness";
 
 const TAIL_MS = 1500;
@@ -23,7 +23,7 @@ const rotationFromOrigin = (origin: Vec3): number =>
   Math.atan2(origin[0], origin[2]) - Math.atan2(TORONTO[0], TORONTO[2]);
 
 /** Strips the generation prefix byGeneration adds ("2:g:5" → "g:5"). */
-const ttlOfKeyed = (id: string): number => ttlOf(id.replace(/^\d+:(?=(?:[gl]:)?\d+$)/, ""));
+const ttlOfKeyed = (id: string): number => ttlOf(id.replace(/^\d+:(?=(?:[gla]:)?\d+$)/, ""));
 
 test("basic: late geo updates and re-estimation glide", async ({ page }) => {
   await openApp(page, FIXTURES.basic);
@@ -43,6 +43,7 @@ test("restart: a cross-ocean relocation glides and a new trace replaces the old 
   // Hop 3 of the first trace was placed by estimate, then the API put it in Frankfurt.
   expect(pathExtent(frames, "1:3")).toBeGreaterThan(0.5);
   expectSmooth(frames, traceOptions(STREAM_MAX_JUMP_WORLD));
+  expectArcsSmooth(frames);
 
   // The restart: generation 2 owns the scene; generation 1's hops are gone.
   const s = await state(page);
@@ -58,7 +59,7 @@ test("restart: a cross-ocean relocation glides and a new trace replaces the old 
     const want = rotateY(where, rot);
     expect(Math.hypot(...at(id).map((v, i) => v - want[i]!)), `${id} drawn at its generation-2 location`).toBeLessThan(1e-3);
   }
-  expect(Object.keys(last.entities).filter((k) => !k.includes("g:") && !k.includes("l:")).sort())
+  expect(Object.keys(last.entities).filter((k) => !/[gla]:/.test(k)).sort())
     .toEqual(["0", "2:1", "2:2", "2:3", "2:4"]);
   expect(Object.keys(last.entities).filter((k) => k.includes("g:")).sort()).toEqual(["2:g:1", "2:g:2", "2:g:3", "2:g:4", "g:0"]);
   await expect(page.locator(".hop")).toHaveCount(expectedRows(FIXTURES.restart.file).length);

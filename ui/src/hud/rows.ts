@@ -1,16 +1,22 @@
 // Pure view-model helpers for the hop list: formatting, labels and grouping.
 import { destinationTtl, sceneDestination } from "../destination";
+import type { LocationDoubt, MaybeShown } from "../plausibility";
 import type { Destination, Hop, Probe } from "../protocol";
 import type { TraceState } from "../reducer";
 import { shortNetworkName } from "./network";
 
 export type Row =
-  | { readonly kind: "hop"; readonly key: string; readonly hop: Hop }
+  /** `doubt`: the IP database's location was ruled out by the reply delay, so the hop is an estimate. */
+  | { readonly kind: "hop"; readonly key: string; readonly hop: Hop; readonly doubt?: LocationDoubt }
   /** A run of silent hops. `title` names it by its neighbours (see quietRunTitle); absent means the generic copy. */
   | { readonly kind: "quiet"; readonly key: string; readonly ttls: readonly number[]; readonly title?: string }
-  /** The end of a quiet finish whose destination answers over TCP. `ttl` is its scene entry, null when the scene draws none. */
+  /** The end of a quiet finish whose destination answers over TCP, or is at least located. `ttl` is its scene entry, null when the scene draws none. */
   | {
       readonly kind: "destination"; readonly key: string; readonly destination: Destination; readonly ttl: number | null;
+      /** The IP database's location was ruled out by the TCP delay, so the destination is an estimate. */
+      readonly doubt?: LocationDoubt;
+      /** True when it answered over TCP; false when only its IP location places it (an estimate throughout). */
+      readonly answers: boolean;
       /** The silent hops this row replaced; selecting any of them in the scene highlights it. */
       readonly ttls: readonly number[];
     }
@@ -69,15 +75,18 @@ export const hasSolidLocation = (hop: Hop): boolean => hop.geoSource !== "estima
 export const isQuiet = (hop: Hop): boolean => hop.probes.every((p) => p.rttMs === null);
 
 /** Primary row text: place and short network, or a plain-language name for local hops. */
-export const placeLabel = (hop: Hop): string => {
+export const placeLabel = (hop: Hop, doubted = false): string => {
   const place = hop.city === null ? null : (hasSolidLocation(hop) ? "" : "≈ ") + hop.city;
   // CGNAT past the first hop is the ISP's own gear: label it by network/place like any public hop.
   if (isPrivateIp(hop.ip) && !(hop.ttl >= 2 && isCgnat(hop.ip))) {
     if (hop.ttl !== 1) return "Local network";
     return place === null ? "Your router" : "Your router · " + place;
   }
-  const parts = [shortNetworkName(hop.org, hop.asn), place].filter((x): x is string => x !== null);
-  return parts.length > 0 ? parts.join(" · ") : (hop.ip ?? "Unknown");
+  const network = shortNetworkName(hop.org, hop.asn);
+  // A doubted hop has no place to name: mark the estimate by itself, or lead it with the IP.
+  const parts = [network, place ?? (doubted && network !== null ? "≈" : null)].filter((x): x is string => x !== null);
+  if (parts.length > 0) return parts.join(" · ");
+  return (doubted ? "≈ " : "") + (hop.ip ?? "Unknown");
 };
 
 type MeasuredRow = Extract<Row, { kind: "hop" | "quiet" }>;
@@ -126,16 +135,19 @@ const nameGaps = (rows: readonly MeasuredRow[]): readonly MeasuredRow[] =>
  * The hop list's rows: hops, named quiet gaps and, for a trace that stopped early, an
  * honest ending in place of the trailing silent hops (the destination, or a closing row).
  */
-export const buildRows = (state: TraceState): readonly Row[] => {
-  const rows = nameGaps(groupHops(state.hops));
+export const buildRows = (state: MaybeShown): readonly Row[] => {
+  const rows = nameGaps(groupHops(state.hops)).map((r) => {
+    const doubt = r.kind === "hop" ? state.doubts?.get(r.hop.ttl) : undefined;
+    return doubt ? { ...r, doubt } : r;
+  });
   if (state.status !== "done" || state.endReason !== "quiet") return rows;
   const trailing = rows.at(-1);
   const body = trailing?.kind === "quiet" ? rows.slice(0, -1) : rows;
   const dest = state.destination;
-  if (dest?.reachable) {
+  if (dest && (dest.reachable || (dest.lat !== null && dest.lon !== null))) {
     const ttl = sceneDestination(state) === null ? null : destinationTtl(state.hops);
     const ttls = trailing?.kind === "quiet" ? trailing.ttls : [];
-    return [...body, { kind: "destination", key: "dest", destination: dest, ttl, ttls }];
+    return [...body, { kind: "destination", key: "dest", destination: dest, ttl, ttls, answers: dest.reachable, ...(state.destinationDoubt ? { doubt: state.destinationDoubt } : {}) }];
   }
   const past = lastResponding(state.hops);
   return [
@@ -155,7 +167,7 @@ export const trailingStopKey = (state: TraceState, rows: readonly Row[]): string
 
 /**
  * "N hops · M networks · X ms" (unknown parts omitted). An unreached trace stops counting at its
- * last reply and has no final delay. A quiet finish whose destination answers reads "N+ hops":
+ * last reply and has no final delay. A quiet finish whose destination answers, or is located, reads "N+ hops":
  * hops through the last reply, plus the destination beyond.
  */
 export const summaryLine = (state: TraceState): string => {
@@ -163,7 +175,9 @@ export const summaryLine = (state: TraceState): string => {
   const last = responding.at(-1);
   const reached = state.reached === true;
   const hopCount = reached || !last ? state.hops.length : state.hops.indexOf(last) + 1;
-  const beyond = state.endReason === "quiet" && state.destination?.reachable === true && last !== undefined;
+  const d = state.destination;
+  const located = d !== null && (d.reachable || (d.lat !== null && d.lon !== null));
+  const beyond = state.endReason === "quiet" && located && last !== undefined;
   // Distinct networks by display name (AS7922 and AS33651 are both Comcast); unnamed ones by AS number.
   const networks = new Set(
     responding

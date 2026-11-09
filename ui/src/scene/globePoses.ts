@@ -2,6 +2,7 @@
 // read a PoseMap. The tunnel lane's poses.ts wraps this (lerping toward gate
 // poses by viewT) without changing the consumers.
 import { angularDistance, slerpGreatCircle, type Vec3 } from "../geo";
+import { stepArcShapes, targetShapes, type ArcShape, type ArcShapeState } from "./arcShape";
 import type { GlobeLayout } from "./layout";
 
 export interface Pose {
@@ -11,6 +12,8 @@ export interface Pose {
   readonly opacity: number;
   /** 0 = globe node (glowing dot) … 1 = tunnel gate (ring). Set by the tunnel lane; absent means 0. */
   readonly morph?: number;
+  /** The shape of the arc ending at this hop (eased by the globe source; see arcShape.ts). Absent: a plain arc. */
+  readonly arcIn?: ArcShape;
 }
 /** Keyed by ttl; the origin uses ORIGIN_KEY. */
 export type PoseMap = ReadonlyMap<number, Pose>;
@@ -41,16 +44,18 @@ export interface GlobePoseState {
   /** Smoothed globe-local unit positions. */
   readonly local: ReadonlyMap<number, Vec3>;
   readonly bornAt: ReadonlyMap<number, number>;
+  /** Eased arc shapes keyed by the ttl each arc ends at. */
+  readonly arcShapes: ArcShapeState;
 }
 
-export const emptyPoseState: GlobePoseState = { generation: 0, local: new Map(), bornAt: new Map() };
+export const emptyPoseState: GlobePoseState = { generation: 0, local: new Map(), bornAt: new Map(), arcShapes: new Map() };
 
 /** A new trace keeps only the origin (the user's own location) and restarts every hop. */
 const forGeneration = (s: GlobePoseState, generation: number): GlobePoseState => {
   if (s.generation === generation) return s;
   const keep = <V>(m: ReadonlyMap<number, V>): Map<number, V> =>
     new Map([...m].filter(([k]) => k === ORIGIN_KEY));
-  return { generation, local: keep(s.local), bornAt: keep(s.bornAt) };
+  return { generation, local: keep(s.local), bornAt: keep(s.bornAt), arcShapes: new Map() };
 };
 
 const BACK_C1 = 1.70158;
@@ -96,15 +101,22 @@ const stepInto = (prevState: GlobePoseState, input: PoseInput, out: PoseBuffers)
   out.poses.clear();
   const place = (k: number, target: Vec3): void => {
     const p = prev.local.get(k);
-    const pos = p ? glide(p, target, input.dtMs) : target;
-    const born = prev.bornAt.get(k) ?? input.nowMs;
-    out.local.set(k, pos);
-    out.bornAt.set(k, born);
-    out.poses.set(k, { pos: rotateY(pos, input.rotationY), ...appearance(input.nowMs - born, input.reducedMotion) });
+    out.local.set(k, p ? glide(p, target, input.dtMs) : target);
+    out.bornAt.set(k, prev.bornAt.get(k) ?? input.nowMs);
   };
   if (origin) place(ORIGIN_KEY, origin);
   for (const h of input.layout.hops) place(h.ttl, h.pos);
-  return { generation: prev.generation, local: out.local, bornAt: out.bornAt };
+  // Arc shapes follow the smoothed positions, so they stay continuous with the nodes they join.
+  const arcs = stepArcShapes(prev.arcShapes, targetShapes(input.layout.hops, out.local, ORIGIN_KEY), input.dtMs, input.reducedMotion);
+  for (const [k, pos] of out.local) {
+    const arcIn = arcs.shapes.get(k);
+    out.poses.set(k, {
+      pos: rotateY(pos, input.rotationY),
+      ...appearance(input.nowMs - out.bornAt.get(k)!, input.reducedMotion),
+      ...(arcIn ? { arcIn } : {}),
+    });
+  }
+  return { generation: prev.generation, local: out.local, bornAt: out.bornAt, arcShapes: arcs.state };
 };
 
 /** Pure: advance smoothed positions one frame and produce this frame's poses. */

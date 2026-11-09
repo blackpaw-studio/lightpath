@@ -235,6 +235,37 @@ describe("quietRunTitle", () => {
   });
 });
 
+describe("buildRows with doubted locations", () => {
+  it("attaches the doubt to its hop row", () => {
+    const h = { ...hop(2), geoSource: "estimated" as const, lat: null, lon: null, city: null };
+    const doubt = { place: "Brisbane", rttMs: 10 };
+    const rows = buildRows({ ...initialState, hops: [h], doubts: new Map([[2, doubt]]), destinationDoubt: null });
+    expect(rows[0]).toMatchObject({ kind: "hop", doubt });
+  });
+});
+
+describe("destination doubt in rows", () => {
+  it("attaches the destination's doubt to its row", () => {
+    const placed: Destination = { ...reachable, lat: null, lon: null, city: null, geoSource: "estimated" };
+    const doubt = { place: "San Francisco", rttMs: 9.2 };
+    const s = finished([verizon(1), quiet(2)], { endReason: "quiet", destination: placed });
+    expect(buildRows({ ...s, doubts: new Map(), destinationDoubt: doubt }).at(-1)).toMatchObject({ kind: "destination", doubt });
+  });
+});
+
+describe("placeLabel for a doubted hop", () => {
+  it("falls back to the IP when the hop has no network name", () => {
+    const h = { ...hop(2), ip: "1.2.3.4", asn: null, org: null, geoSource: "estimated" as const, city: null, lat: null, lon: null };
+    expect(placeLabel(h, true)).toBe("≈ 1.2.3.4");
+    expect(placeLabel({ ...h, ip: null }, true)).toBe("≈ Unknown");
+  });
+  it("marks the network with a bare ≈ since no place is known", () => {
+    const h = { ...hop(2), asn: 701, org: "UUNET - Verizon Business, US", geoSource: "estimated" as const, city: null, lat: null, lon: null };
+    expect(placeLabel(h, true)).toBe("Verizon · ≈");
+    expect(placeLabel(h)).toBe("Verizon");
+  });
+});
+
 describe("buildRows", () => {
   it("names a gap between two responding hops by its neighbours", () => {
     const rows = buildRows(finished([verizon(1), quiet(2), quiet(3), quiet(4), verizon(5), quiet(6), cloudflare(7)], { reached: true, endReason: "reached" }));
@@ -263,6 +294,14 @@ describe("buildRows", () => {
     expect(rows.map((r) => r.kind)).toEqual(["hop", "hop", "end"]);
     expect(rows.at(-1)).toMatchObject({ kind: "end", key: "end", pastLabel: "Verizon", ttls: [3, 4, 5, 6, 7] });
   });
+  it("gives a located destination that does not answer a destination row, marked as not answering", () => {
+    const placed: Destination = { ...unreachable, lat: 41.9, lon: -87.6, city: "Chicago", geoSource: "api" };
+    const s = finished([verizon(1), verizon(2), quiet(3), quiet(4)], { endReason: "quiet", destination: placed });
+    const rows = buildRows(s);
+    expect(rows.map((r) => r.kind)).toEqual(["hop", "hop", "destination"]);
+    expect(rows.at(-1)).toMatchObject({ kind: "destination", answers: false, ttl: 5, ttls: [3, 4] });
+    expect(buildRows({ ...s, destination: reachable }).at(-1)).toMatchObject({ answers: true });
+  });
   it("closes with an end row when a quiet finish carries no destination at all", () => {
     const rows = buildRows(finished([verizon(1), quiet(2)], { endReason: "quiet", destination: null }));
     expect(rows.at(-1)).toMatchObject({ kind: "end" });
@@ -286,5 +325,10 @@ describe("summaryLine for quiet finishes", () => {
   it("stays as before when the destination does not answer", () => {
     const s = finished([hop(1, { ip: "192.168.1.1" }), verizon(2), quiet(3), quiet(4), quiet(5), quiet(6), quiet(7)], { endReason: "quiet", destination: unreachable });
     expect(summaryLine(s)).toBe("2 hops · 1 network");
+  });
+  it("reads N+ hops for a located destination that does not answer", () => {
+    const placed: Destination = { ...unreachable, lat: 41.9, lon: -87.6, city: "Chicago", geoSource: "api" };
+    const s = finished([hop(1, { ip: "192.168.1.1" }), verizon(2), quiet(3), quiet(4)], { endReason: "quiet", destination: placed });
+    expect(summaryLine(s)).toBe("3+ hops · 1 network");
   });
 });

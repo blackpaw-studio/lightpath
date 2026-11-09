@@ -3,7 +3,12 @@ import { angularDistance, latLonToVec3 } from "../geo";
 import { Vector3 } from "three";
 import { checkTrace, type Frame } from "../invariants";
 import type { Vec3 } from "../geo";
-import { applyFraming, clampLatitude, createCameraRig, fitDistance, frameTarget, inView, springStep } from "./camera";
+import {
+  applyFraming, clampLatitude, createCameraRig, FIT_MARGIN, fitInRect, FOV_DEG, frameTarget, MAX_DISTANCE, solveFraming, springStep,
+} from "./camera";
+import { rotateY } from "./globePoses";
+import { MAX_JUMP_PX } from "./motionBudget";
+import { FULL_NDC, safeRect, toNdc, type NdcRect } from "./safeArea";
 
 describe("springStep (critically damped)", () => {
   it("converges to the target without overshoot", () => {
@@ -56,32 +61,6 @@ describe("frameTarget", () => {
   });
 });
 
-describe("fitDistance", () => {
-  // Angle off the view axis of a unit-sphere point `theta` from the camera direction.
-  const offAxis = (d: number, theta: number) => Math.atan(Math.sin(theta) / (d - Math.cos(theta)));
-
-  it("pulls back further for wider spans", () => {
-    const ds = [0.05, 0.4, 0.9, 1.4].map((t) => fitDistance([t], 16 / 9, 35));
-    ds.slice(1).forEach((d, i) => expect(d).toBeGreaterThanOrEqual(ds[i]!));
-    expect(ds[3]).toBeGreaterThan(ds[0]!);
-  });
-
-  it("keeps every framed point inside the narrower half-FOV, on portrait too", () => {
-    for (const aspect of [16 / 9, 1, 375 / 812]) {
-      const vHalf = (35 * Math.PI) / 360;
-      const hHalf = Math.atan(Math.tan(vHalf) * aspect);
-      for (const theta of [0.3, 0.8, 1.2, 1.5]) {
-        const d = fitDistance([theta, 0.1], aspect, 35);
-        expect(offAxis(d, theta)).toBeLessThan(Math.min(vHalf, hHalf));
-      }
-    }
-  });
-
-  it("backs off further on portrait than landscape", () => {
-    expect(fitDistance([1], 375 / 812, 35)).toBeGreaterThan(fitDistance([1], 16 / 9, 35));
-  });
-});
-
 describe("clampLatitude", () => {
   it("keeps longitude and limits latitude so north stays up", () => {
     const d = clampLatitude(latLonToVec3(85, 40), 50);
@@ -124,21 +103,6 @@ describe("createCameraRig reframing", () => {
   });
 });
 
-describe("inView", () => {
-  const cam = (lat: number, lon: number, d: number): Vec3 => latLonToVec3(lat, lon).map((x) => x * d) as unknown as Vec3;
-
-  it("accepts the point under the camera and rejects the far side", () => {
-    expect(inView(cam(40, -74, 3), latLonToVec3(40, -74), 16 / 9, 35)).toBe(true);
-    expect(inView(cam(40, -74, 3), latLonToVec3(-40, 106), 16 / 9, 35)).toBe(false);
-  });
-
-  it("uses the narrower half-FOV, so portrait rejects what landscape accepts", () => {
-    const p = latLonToVec3(40, -34); // ~9.4° off the camera axis at distance 4
-    expect(inView(cam(40, -74, 4), p, 16 / 9, 35)).toBe(true);
-    expect(inView(cam(40, -74, 4), p, 375 / 812, 35)).toBe(false);
-  });
-});
-
 describe("applyFraming", () => {
   const route = [
     [40.68, -73.94], [40.71, -74.01], [39.04, -77.49], [51.51, -0.13], [52.37, 4.9], [50.11, 8.68],
@@ -156,11 +120,187 @@ describe("applyFraming", () => {
       const before = rig.camera.position.clone();
       const cut = applyFraming(rig, route.slice(0, i + 1), true);
       expect(cut).toBe(!before.equals(rig.camera.position));
-      expect(inView(rig.camera.position.toArray(), route[i]!, 16 / 9, 35)).toBe(true);
+      expect(rig.contains([route[i]!])).toBe(true);
       return cut;
     });
     // Brooklyn's local hops share one framing: at most one cut for hops 1–3.
     expect(cuts.slice(1, 3)).toEqual([false, false]);
     expect(cuts.filter(Boolean).length).toBeLessThan(route.length / 2);
+  });
+});
+
+// Framing into the area the HUD leaves free.
+const NY = latLonToVec3(40.68, -73.94);
+const MOSCOW = latLonToVec3(55.75, 37.62);
+const LONG_HAUL = [NY, [51.51, -0.13], [59.33, 18.07], [6.52, 3.38], [55.75, 37.62]]
+  .map((p) => (Array.isArray(p) ? latLonToVec3(p[0]!, p[1]!) : p)) as Vec3[];
+const DESKTOP = { w: 1280, h: 720 };
+const PHONE = { w: 375, h: 812 };
+const LEFT_COLUMN: NdcRect = toNdc(safeRect(DESKTOP, [{ left: 16, top: 16, right: 396, bottom: 704 }]), DESKTOP);
+const BAND: NdcRect = toNdc(safeRect(PHONE, [{ left: 10, top: 10, right: 365, bottom: 120 }, { left: 0, top: 438, right: 375, bottom: 812 }]), PHONE);
+
+const ndcOf = (rig: ReturnType<typeof createCameraRig>, p: Vec3): Vector3 => {
+  rig.camera.updateMatrixWorld(true);
+  return new Vector3(...p).project(rig.camera);
+};
+const faces = (rig: ReturnType<typeof createCameraRig>, p: Vec3): boolean => {
+  const c = rig.camera.position;
+  return p[0] * c.x + p[1] * c.y + p[2] * c.z > 1;
+};
+const insideRect = (v: Vector3, r: NdcRect, margin = FIT_MARGIN): boolean =>
+  Math.abs(v.x - r.cx) <= r.hx * margin + 1e-6 && Math.abs(v.y - r.cy) <= r.hy * margin + 1e-6;
+const settle = (rig: ReturnType<typeof createCameraRig>, ms = 8000): void => {
+  for (let t = 0; t < ms; t += 1000 / 60) rig.update(1000 / 60);
+};
+
+describe("fitInRect", () => {
+  const dir = solveFraming(LONG_HAUL, 16 / 9, FOV_DEG, LEFT_COLUMN).dir;
+
+  it("pulls back further for a smaller free area", () => {
+    const full = fitInRect(LONG_HAUL, dir, 16 / 9, FOV_DEG, FULL_NDC)!;
+    const short = fitInRect(LONG_HAUL, dir, 16 / 9, FOV_DEG, { cx: 0, cy: 0, hx: 1, hy: 0.3 })!;
+    const narrow = fitInRect(LONG_HAUL, dir, 16 / 9, FOV_DEG, { cx: 0, cy: 0, hx: 0.2, hy: 1 })!;
+    expect(short).toBeGreaterThan(full);
+    expect(narrow).toBeGreaterThan(full);
+  });
+
+  it("is null when a point is past the limb of the view direction", () => {
+    const back = latLonToVec3(-40, 106); // antipode of New York
+    expect(fitInRect([NY, back], NY, 16 / 9, FOV_DEG, FULL_NDC)).toBeNull();
+  });
+
+  it("is null when the fit would need more than the maximum distance", () => {
+    const near = latLonToVec3(40.68 - 88, -73.94); // 88° off: it clears the horizon only from beyond MAX_DISTANCE
+    expect(fitInRect([NY, near], NY, 16 / 9, FOV_DEG, LEFT_COLUMN)).toBeNull();
+  });
+});
+
+describe("solveFraming", () => {
+  it("fits the New York to Moscow path into the free area of a wide screen, every node facing the camera", () => {
+    const { dir, dist } = solveFraming(LONG_HAUL, 16 / 9, FOV_DEG, LEFT_COLUMN);
+    expect(dist).toBeLessThan(MAX_DISTANCE);
+    LONG_HAUL.forEach((p) => expect(p[0] * dir[0] + p[1] * dir[1] + p[2] * dir[2]).toBeGreaterThan(1 / dist));
+  });
+
+  it("falls back to the origin–end great-circle midpoint at the maximum distance when the path is too wide", () => {
+    const far = latLonToVec3(-30, 100);
+    const { dir, dist } = solveFraming([NY, far], 16 / 9, FOV_DEG, FULL_NDC);
+    expect(dist).toBe(MAX_DISTANCE);
+    expect(angularDistance(dir, NY)).toBeLessThan(Math.PI / 2);
+    expect(angularDistance(dir, far)).toBeLessThan(Math.PI / 2);
+  });
+
+  it("uses the same recipe for an exactly antipodal pair without producing NaN", () => {
+    const { dir, dist } = solveFraming([NY, latLonToVec3(-40.68, 106.06)], 16 / 9, FOV_DEG, FULL_NDC);
+    expect(dist).toBe(MAX_DISTANCE);
+    expect(dir.every(Number.isFinite)).toBe(true);
+  });
+});
+
+describe("createCameraRig in the free area", () => {
+  const framed = (aspect: number, rect: NdcRect, points: readonly Vec3[] = LONG_HAUL) => {
+    const rig = createCameraRig(aspect);
+    rig.setSafeRect(rect, true);
+    rig.frame(points, true);
+    return rig;
+  };
+
+  it("puts a path inside the visible region beside a left column, and the globe centre right of the screen centre", () => {
+    const rig = framed(16 / 9, LEFT_COLUMN);
+    settle(rig);
+    LONG_HAUL.forEach((p) => {
+      expect(faces(rig, p)).toBe(true);
+      expect(insideRect(ndcOf(rig, p), LEFT_COLUMN)).toBe(true);
+    });
+    expect(ndcOf(rig, [0, 0, 0]).x).toBeCloseTo(LEFT_COLUMN.cx, 6);
+    expect(ndcOf(rig, [0, 0, 0]).x).toBeGreaterThan(0.2);
+  });
+
+  it("puts a path inside the band between a top and a bottom sheet at phone width, shifting the centre vertically", () => {
+    const rig = framed(PHONE.w / PHONE.h, BAND);
+    settle(rig);
+    LONG_HAUL.forEach((p) => {
+      expect(faces(rig, p)).toBe(true);
+      expect(insideRect(ndcOf(rig, p), BAND)).toBe(true);
+    });
+    expect(ndcOf(rig, [0, 0, 0]).y).toBeCloseTo(BAND.cy, 6);
+    expect(BAND.cy).not.toBeCloseTo(0, 1);
+  });
+
+  it("tracks the globe's idle rotation, keeping the path in the area", () => {
+    const rig = framed(16 / 9, LEFT_COLUMN);
+    settle(rig);
+    const yaw = 0.4;
+    rig.setYaw(yaw);
+    settle(rig);
+    LONG_HAUL.map((p) => rotateY(p, yaw)).forEach((p) => {
+      expect(faces(rig, p)).toBe(true);
+      expect(insideRect(ndcOf(rig, p), LEFT_COLUMN)).toBe(true);
+    });
+  });
+
+  it("re-targets smoothly when the free area changes: no point jumps further than the frame budget", () => {
+    const rig = framed(16 / 9, FULL_NDC);
+    settle(rig);
+    rig.setSafeRect(LEFT_COLUMN, false);
+    const screen = (p: Vec3) => {
+      const v = ndcOf(rig, p);
+      return [((v.x + 1) / 2) * DESKTOP.w, ((1 - v.y) / 2) * DESKTOP.h] as const;
+    };
+    let prev = LONG_HAUL.map(screen);
+    let worst = 0;
+    for (let t = 0; t < 6000; t += 1000 / 60) {
+      rig.update(1000 / 60);
+      const now = LONG_HAUL.map(screen);
+      worst = Math.max(worst, ...now.map((q, i) => Math.hypot(q[0] - prev[i]![0], q[1] - prev[i]![1])));
+      prev = now;
+    }
+    expect(worst).toBeLessThan(MAX_JUMP_PX);
+    LONG_HAUL.forEach((p) => expect(insideRect(ndcOf(rig, p), LEFT_COLUMN)).toBe(true));
+  });
+
+  it("cuts straight to the new area when asked to be instant (reduced motion)", () => {
+    const rig = framed(16 / 9, FULL_NDC);
+    settle(rig);
+    rig.setSafeRect(LEFT_COLUMN, true);
+    expect(ndcOf(rig, [0, 0, 0]).x).toBeCloseTo(LEFT_COLUMN.cx, 6);
+  });
+
+  it("drops the offset when its scale is 0 (inside the tunnel) and restores it after", () => {
+    const rig = framed(16 / 9, LEFT_COLUMN);
+    rig.setOffsetScale(0);
+    rig.update(16);
+    expect(ndcOf(rig, [0, 0, 0]).x).toBeCloseTo(0, 6);
+    rig.setOffsetScale(1);
+    rig.update(16);
+    expect(ndcOf(rig, [0, 0, 0]).x).toBeCloseTo(LEFT_COLUMN.cx, 3);
+  });
+
+  it("shifts every point by exactly the offset in NDC, without rescaling the picture", () => {
+    const a = createCameraRig(16 / 9);
+    a.setSafeRect(FULL_NDC, true);
+    a.frame([NY], true);
+    const b = createCameraRig(16 / 9);
+    b.setSafeRect({ cx: 0.3, cy: -0.2, hx: 1, hy: 1 }, true);
+    b.frame([NY], true);
+    const probe = latLonToVec3(48, -60);
+    const pa = ndcOf(a, probe);
+    const pb = ndcOf(b, probe);
+    expect(pb.x - pa.x).toBeCloseTo(0.3, 6);
+    expect(pb.y - pa.y).toBeCloseTo(-0.2, 6);
+  });
+
+  it("keeps the offset through a field-of-view change (the tunnel flight rewrites the projection)", () => {
+    const rig = framed(16 / 9, LEFT_COLUMN);
+    rig.camera.fov = 50;
+    rig.camera.updateProjectionMatrix();
+    expect(ndcOf(rig, [0, 0, 0]).x).toBeCloseTo(LEFT_COLUMN.cx, 6);
+  });
+
+  it("contains() is true only for points facing the camera and inside the area", () => {
+    const rig = framed(16 / 9, LEFT_COLUMN);
+    expect(rig.contains(LONG_HAUL)).toBe(true);
+    expect(rig.contains([...LONG_HAUL, latLonToVec3(-40, 106)])).toBe(false);
+    expect(rig.contains([MOSCOW, latLonToVec3(40.68, -73.94 - 70)])).toBe(false);
   });
 });

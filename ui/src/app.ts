@@ -2,6 +2,7 @@
 // the scene meet. main.ts builds the real pieces and hands them in; tests use fakes.
 import type { ConnState } from "./conn";
 import type { ClientMsg, ServerMsg } from "./protocol";
+import { checkLocations, type ShownState } from "./plausibility";
 import { initialState, interrupt, reduce, type TraceState } from "./reducer";
 import type { HudHandlers, View } from "./hud/hud";
 import type { ViewMode } from "./scene/transition";
@@ -10,13 +11,13 @@ export const DISCONNECTED_MESSAGE = "Lost the connection to the agent: trace int
 export const CANCELLED_MESSAGE = "Trace cancelled.";
 
 export interface HudLike {
-  render(state: TraceState, conn: ConnState): void;
+  render(state: ShownState, conn: ConnState): void;
   setView(view: View): void;
   setFocus(ttl: number | null): void;
 }
 
 export interface SceneLike {
-  setState(state: TraceState): void;
+  setState(state: ShownState): void;
   dive(): boolean;
   surface(): void;
   focusHop(ttl: number): boolean;
@@ -26,6 +27,8 @@ export interface SceneLike {
 export interface ControllerDeps {
   /** Sends to the agent; false when the socket is not open. */
   send(msg: ClientMsg): boolean;
+  /** What the views show for a reducer state (default: implausible locations dropped). */
+  derive?(state: TraceState): ShownState;
 }
 
 export interface Controller {
@@ -44,7 +47,9 @@ export interface Controller {
 export const hudView = (mode: ViewMode): View => (mode === "diving" || mode === "tunnel" ? "tunnel" : "globe");
 
 export const createController = (deps: ControllerDeps): Controller => {
+  const derive = deps.derive ?? checkLocations;
   let state: TraceState = initialState;
+  let shown: ShownState = derive(state);
   let conn: ConnState = { status: "connecting", failures: 0, slow: false };
   let hud: HudLike | null = null;
   let scene: SceneLike | null = null;
@@ -54,7 +59,8 @@ export const createController = (deps: ControllerDeps): Controller => {
     if (next === state) return;
     if (next.generation !== state.generation) hud?.setFocus(null);
     state = next;
-    hud?.render(state, conn);
+    shown = derive(state);
+    hud?.render(shown, conn);
   };
 
   const syncView = (): void => {
@@ -90,11 +96,11 @@ export const createController = (deps: ControllerDeps): Controller => {
     attachHud: (h) => {
       hud = h;
       h.setView(view);
-      h.render(state, conn);
+      h.render(shown, conn);
     },
     attachScene: (s) => {
       scene = s;
-      s.setState(state);
+      s.setState(shown);
       syncView();
     },
     onMessage: (msg) => setState(reduce(state, msg)),
@@ -102,10 +108,10 @@ export const createController = (deps: ControllerDeps): Controller => {
       const dropped = conn.status === "connected" && next.status !== "connected";
       conn = next;
       if (dropped && state.status === "running") setState(interrupt(state, "disconnected", DISCONNECTED_MESSAGE));
-      else hud?.render(state, conn);
+      else hud?.render(shown, conn);
     },
     frame: () => {
-      scene?.setState(state);
+      scene?.setState(shown);
       syncView();
     },
     state: () => state,
