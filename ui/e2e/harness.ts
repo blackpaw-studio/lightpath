@@ -151,16 +151,16 @@ export const traceOptions = (maxJumpWorld?: number): TraceOptions =>
   ({ maxJumpPx: MAX_JUMP_PX, flickerWindowMs: FLICKER_WINDOW_MS, maxJumpWorld });
 
 /**
- * An arc's highest point moves with its endpoints: at most a glide's worth of arc radius
+ * An arc's crest moves with its endpoints: at most a glide's worth of arc radius
  * (1 + 0.25·π at the very most) per frame. A jump in arc shape is far larger than that.
  */
 export const ARC_MAX_JUMP_WORLD = STREAM_MAX_JUMP_WORLD * 1.8;
 
-/** The arc-shape check: world continuity of each arc's highest point (the a:<ttl> entities). */
-export const expectArcsSmooth = (frames: readonly Frame[], maxJumpWorld: number = ARC_MAX_JUMP_WORLD): void => {
+/** The arc-shape check: world continuity of each arc's crest (the a:<ttl> entities). */
+export const expectArcsSmooth = (frames: readonly Frame[]): void => {
   const arcs = frames.map((f) => ({ ...f, entities: Object.fromEntries(Object.entries(f.entities).filter(([k]) => isArcId(k))) }));
   expect(arcs.some((f) => Object.keys(f.entities).length > 0), "the trace records arc entities").toBe(true);
-  assertNoViolations(arcs, { maxJumpPx: Infinity, flickerWindowMs: 0, maxJumpWorld });
+  assertNoViolations(arcs, { maxJumpPx: Infinity, flickerWindowMs: 0, maxJumpWorld: ARC_MAX_JUMP_WORLD });
 };
 
 const isArcId = (id: string): boolean => /(^|:)a:\d+$/.test(id);

@@ -13,10 +13,10 @@ import { applyFraming, createCameraRig, type CameraRig } from "./camera";
 import { sceneDestination } from "../destination";
 import type { BloomTier } from "./frameBudget";
 import { createGlobePoseSource, ORIGIN_KEY, rotateY, type PoseMap, type PoseSource } from "./globePoses";
-import { createArcs, type ArcInfo, type ArcRun } from "./arcs";
+import { createArcs, type ArcInfo } from "./arcs";
 import { createLandDots } from "./landdots";
 import type { DrawnMark } from "./marks";
-import { globeLayout, type GlobeLayout, type LaidHop } from "./layout";
+import { globeLayout, type GlobeLayout } from "./layout";
 import { createNodes, type NodeInfo } from "./nodes";
 import { safeRect, toNdc, type Rect } from "./safeArea";
 import { createStars } from "./stars";
@@ -51,7 +51,7 @@ export interface GlobeView extends Steppable {
   trace(): TraceFrame;
   /** Each node's dot as drawn this frame (tracing). */
   nodeMarks(): ReadonlyMap<number, DrawnMark>;
-  /** Each arc's highest point as drawn this frame, keyed by the ttl it ends at. */
+  /** Each arc's crest as drawn this frame, keyed by the ttl it ends at. */
   arcMarks(): ReadonlyMap<number, DrawnMark>;
   /** World point → CSS-pixel screen position through the current camera. */
   project(p: Vec3): Projection;
@@ -93,40 +93,15 @@ export const nodeInfos = (state: TraceState, layout: GlobeLayout): Map<number, N
   ]);
 };
 
-/**
- * For each layout hop index, the run its arc belongs to: a maximal run of
- * interpolated hops with a located hop on each side, which estimatePosition puts
- * on one great circle at their ttl fractions. Runs without both anchors (their
- * hops pile onto one point) have no entry.
- */
-const runSpans = (hops: readonly LaidHop[]): ReadonlyMap<number, ArcRun> => {
-  const spans = new Map<number, ArcRun>();
-  for (let i = 0; i < hops.length;) {
-    if (hops[i]!.located) { i++; continue; }
-    let j = i;
-    while (j + 1 < hops.length && !hops[j + 1]!.located) j++;
-    const from = hops[i - 1];
-    const to = hops[j + 1];
-    if (from && to) {
-      for (let k = i; k <= j + 1; k++) spans.set(k, { from: from.ttl, to: to.ttl });
-    }
-    i = j + 1;
-  }
-  return spans;
-};
-
 export const arcInfos = (layout: GlobeLayout): ArcInfo[] => {
-  const spans = runSpans(layout.hops);
   return layout.hops.map((h, i) => {
     const prev = layout.hops[i - 1];
-    const span = spans.get(i);
     return {
       from: prev?.ttl ?? ORIGIN_KEY,
       to: h.ttl,
       colorFrom: prev?.color ?? ORIGIN_ARC_COLOR,
       colorTo: h.color,
       estimated: h.estimated || (prev?.estimated ?? false),
-      ...(span ? { span } : {}),
     };
   });
 };
@@ -241,6 +216,11 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
       pendingCut = false;
       if (state.status !== "running" && !opts.reducedMotion && !rotationPaused) rotation += (IDLE_ROTATION * dtMs) / 1000;
       poses = poseSource({ layout, nowMs, dtMs, reducedMotion: opts.reducedMotion, rotationY: rotation });
+      // Reduced motion takes a change of arc shape at once: a declared cut, not an animation.
+      if (opts.reducedMotion && [...poses.values()].some((p) => p.arcIn?.snapped)) {
+        cutThisFrame = true;
+        fadeStart = nowMs;
+      }
       reframe();
       rig.setYaw(rotation);
       rig.update(dtMs);
@@ -278,7 +258,7 @@ export const createGlobeView = (opts: GlobeViewOptions): GlobeView => {
     poses: () => poses,
     trace: () => ({ ...projectFrame(now, poses, project), ...(cutThisFrame ? { cut: true } : {}) }),
     nodeMarks: () => nodes.marks(),
-    arcMarks: () => arcs.apexes(),
+    arcMarks: () => arcs.crests(),
     project,
     setPoseSource: (s) => { poseSource = s; },
     setGlobeOpacity: (o) => {
