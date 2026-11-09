@@ -280,6 +280,14 @@ describe("buildRows", () => {
     expect(rows.map((r) => r.kind)).toEqual(["hop", "hop", "end"]);
     expect(rows.at(-1)).toMatchObject({ kind: "end", key: "end", pastLabel: "Verizon", ttls: [3, 4, 5, 6, 7] });
   });
+  it("gives a located destination that does not answer a destination row, marked as not answering", () => {
+    const placed: Destination = { ...unreachable, lat: 41.9, lon: -87.6, city: "Chicago", geoSource: "api" };
+    const s = finished([verizon(1), verizon(2), quiet(3), quiet(4)], { endReason: "quiet", destination: placed });
+    const rows = buildRows(s);
+    expect(rows.map((r) => r.kind)).toEqual(["hop", "hop", "destination"]);
+    expect(rows.at(-1)).toMatchObject({ kind: "destination", answers: false, ttl: 5, ttls: [3, 4] });
+    expect(buildRows({ ...s, destination: reachable }).at(-1)).toMatchObject({ answers: true });
+  });
   it("closes with an end row when a quiet finish carries no destination at all", () => {
     const rows = buildRows(finished([verizon(1), quiet(2)], { endReason: "quiet", destination: null }));
     expect(rows.at(-1)).toMatchObject({ kind: "end" });
@@ -303,5 +311,10 @@ describe("summaryLine for quiet finishes", () => {
   it("stays as before when the destination does not answer", () => {
     const s = finished([hop(1, { ip: "192.168.1.1" }), verizon(2), quiet(3), quiet(4), quiet(5), quiet(6), quiet(7)], { endReason: "quiet", destination: unreachable });
     expect(summaryLine(s)).toBe("2 hops · 1 network");
+  });
+  it("reads N+ hops for a located destination that does not answer", () => {
+    const placed: Destination = { ...unreachable, lat: 41.9, lon: -87.6, city: "Chicago", geoSource: "api" };
+    const s = finished([hop(1, { ip: "192.168.1.1" }), verizon(2), quiet(3), quiet(4)], { endReason: "quiet", destination: placed });
+    expect(summaryLine(s)).toBe("3+ hops · 1 network");
   });
 });

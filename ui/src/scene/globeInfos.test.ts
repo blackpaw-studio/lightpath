@@ -23,8 +23,14 @@ describe("destination on the globe", () => {
     expect(arcInfos(l).at(-1)).toMatchObject({ from: 3, to: 4, estimated: true });
     expect(nodeInfos(s, l).get(4)).toMatchObject({ role: "destination", estimated: true });
   });
-  it("draws no arc or destination node when the destination does not answer", () => {
+  it("draws an estimated arc and destination node for a located destination that does not answer", () => {
     const s = quietDone({ ...dest, reachable: false, port: null, rttMs: null });
+    const l = globeLayout(s);
+    expect(arcInfos(l).at(-1)).toMatchObject({ from: 3, to: 4, estimated: true });
+    expect(nodeInfos(s, l).get(4)).toMatchObject({ role: "destination", estimated: true });
+  });
+  it("draws no arc or destination node when the destination does not answer and has no location", () => {
+    const s = quietDone({ ...dest, reachable: false, port: null, rttMs: null, lat: null, lon: null });
     const l = globeLayout(s);
     expect(arcInfos(l)).toHaveLength(3);
     expect(nodeInfos(s, l).has(4)).toBe(false);

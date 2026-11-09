@@ -16,11 +16,13 @@ const quiet = (over: Partial<TraceState> = {}): TraceState => ({
 });
 
 describe("sceneDestination", () => {
-  it("is the destination of a quiet finish that answers and has a location", () => {
+  it("is the destination of a quiet finish that has a location, answering or not", () => {
     expect(sceneDestination(quiet())).toEqual(dest());
+    const silent = dest({ reachable: false, port: null, rttMs: null });
+    expect(sceneDestination(quiet({ destination: silent }))).toEqual(silent);
   });
   it.each<[string, Partial<TraceState>]>([
-    ["unreachable", { destination: dest({ reachable: false, port: null, rttMs: null }) }],
+    ["unreachable and unlocated", { destination: dest({ reachable: false, port: null, rttMs: null, lat: null, lon: null }) }],
     ["no location", { destination: dest({ lat: null, lon: null }) }],
     ["no destination", { destination: null }],
     ["a reached trace", { endReason: "reached", reached: true }],

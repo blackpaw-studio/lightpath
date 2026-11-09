@@ -136,8 +136,13 @@ describe("tunnelGates destination", () => {
   it("marks real hops as not estimated", () => {
     expect(tunnelGates(finished()).slice(0, 2).map((g) => g.estimated)).toEqual([false, false]);
   });
+  it("ends with an estimated gate, with no delay, for a located destination that does not answer", () => {
+    const gates = tunnelGates(finished({ destination: { ...dest, reachable: false, port: null, rttMs: null } }));
+    expect(gates).toHaveLength(3);
+    expect(gates.at(-1)).toMatchObject({ ttl: 3, title: "Destination", detail: "Cloudflare", estimated: true, broken: false });
+  });
   it("has no destination gate when unreachable, unlocated, or the trace did not stop quiet", () => {
-    expect(tunnelGates(finished({ destination: { ...dest, reachable: false, port: null, rttMs: null } }))).toHaveLength(2);
+    expect(tunnelGates(finished({ destination: { ...dest, reachable: false, port: null, rttMs: null, lat: null, lon: null } }))).toHaveLength(2);
     expect(tunnelGates(finished({ destination: { ...dest, lat: null, lon: null } }))).toHaveLength(2);
     expect(tunnelGates(finished({ endReason: "reached" }))).toHaveLength(2);
   });

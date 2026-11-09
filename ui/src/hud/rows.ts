@@ -10,9 +10,11 @@ export type Row =
   | { readonly kind: "hop"; readonly key: string; readonly hop: Hop; readonly doubt?: LocationDoubt }
   /** A run of silent hops. `title` names it by its neighbours (see quietRunTitle); absent means the generic copy. */
   | { readonly kind: "quiet"; readonly key: string; readonly ttls: readonly number[]; readonly title?: string }
-  /** The end of a quiet finish whose destination answers over TCP. `ttl` is its scene entry, null when the scene draws none. */
+  /** The end of a quiet finish whose destination answers over TCP, or is at least located. `ttl` is its scene entry, null when the scene draws none. */
   | {
       readonly kind: "destination"; readonly key: string; readonly destination: Destination; readonly ttl: number | null;
+      /** True when it answered over TCP; false when only its IP location places it (an estimate throughout). */
+      readonly answers: boolean;
       /** The silent hops this row replaced; selecting any of them in the scene highlights it. */
       readonly ttls: readonly number[];
     }
@@ -137,10 +139,10 @@ export const buildRows = (state: MaybeShown): readonly Row[] => {
   const trailing = rows.at(-1);
   const body = trailing?.kind === "quiet" ? rows.slice(0, -1) : rows;
   const dest = state.destination;
-  if (dest?.reachable) {
+  if (dest && (dest.reachable || (dest.lat !== null && dest.lon !== null))) {
     const ttl = sceneDestination(state) === null ? null : destinationTtl(state.hops);
     const ttls = trailing?.kind === "quiet" ? trailing.ttls : [];
-    return [...body, { kind: "destination", key: "dest", destination: dest, ttl, ttls }];
+    return [...body, { kind: "destination", key: "dest", destination: dest, ttl, ttls, answers: dest.reachable }];
   }
   const past = lastResponding(state.hops);
   return [
@@ -160,7 +162,7 @@ export const trailingStopKey = (state: TraceState, rows: readonly Row[]): string
 
 /**
  * "N hops · M networks · X ms" (unknown parts omitted). An unreached trace stops counting at its
- * last reply and has no final delay. A quiet finish whose destination answers reads "N+ hops":
+ * last reply and has no final delay. A quiet finish whose destination answers, or is located, reads "N+ hops":
  * hops through the last reply, plus the destination beyond.
  */
 export const summaryLine = (state: TraceState): string => {
@@ -168,7 +170,9 @@ export const summaryLine = (state: TraceState): string => {
   const last = responding.at(-1);
   const reached = state.reached === true;
   const hopCount = reached || !last ? state.hops.length : state.hops.indexOf(last) + 1;
-  const beyond = state.endReason === "quiet" && state.destination?.reachable === true && last !== undefined;
+  const d = state.destination;
+  const located = d !== null && (d.reachable || (d.lat !== null && d.lon !== null));
+  const beyond = state.endReason === "quiet" && located && last !== undefined;
   // Distinct networks by display name (AS7922 and AS33651 are both Comcast); unnamed ones by AS number.
   const networks = new Set(
     responding

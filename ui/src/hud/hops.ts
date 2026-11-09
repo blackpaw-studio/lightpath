@@ -7,6 +7,7 @@ import { delayText, hasSolidLocation, medianRtt, placeLabel, type Row } from "./
 export const QUIET_SUBTITLE = "Many networks hide their routers; the path continues.";
 export const STOPPED_SUBTITLE = "The trace stopped here; the destination didn't answer.";
 export const DESTINATION_SUBTITLE = "Answers directly; routers near it stay quiet.";
+export const UNANSWERING_SUBTITLE = "Doesn't answer traces; the last stretch is estimated from its IP location.";
 export const END_TITLE = "The destination doesn't answer traces";
 
 export interface RowHandlers {
@@ -149,20 +150,24 @@ export const quietRowEl = (
   return li;
 };
 
-const destinationPlace = (d: Destination): string => {
-  const place = d.city === null ? null : (d.geoSource === "estimated" ? "≈ " : "") + d.city;
+const destinationPlace = (d: Destination, answers: boolean): string => {
+  // A destination that does not answer is placed from its IP location alone: always an estimate.
+  const place = d.city === null ? null : (d.geoSource === "estimated" || !answers ? "≈ " : "") + d.city;
   return [
     "Destination", shortNetworkName(d.org, d.asn), place, d.rttMs === null ? null : delayText(d.rttMs),
   ].filter((x): x is string => x !== null).join(" · ");
 };
 
-/** The end of a quiet finish that answers over TCP. Focuses its scene entry when the scene has one. */
+/** The end of a quiet finish that answers over TCP, or is located without answering. Focuses its scene entry when the scene has one. */
 export const destinationRowEl = (doc: Document, row: DestinationRow, expanded: boolean, h: RowHandlers): HTMLElement => {
   const d = row.destination;
   const dot = el(doc, "span", "dot hollow");
   dot.setAttribute("aria-hidden", "true");
   const text = el(doc, "span", "dest-text");
-  text.append(el(doc, "span", "place", destinationPlace(d)), el(doc, "span", "subtitle", DESTINATION_SUBTITLE));
+  text.append(
+    el(doc, "span", "place", destinationPlace(d, row.answers)),
+    el(doc, "span", "subtitle", row.answers ? DESTINATION_SUBTITLE : UNANSWERING_SUBTITLE),
+  );
   const detail = detailList(doc, [
     ["IP", d.ip],
     ["Host", d.host],

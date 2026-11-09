@@ -102,9 +102,15 @@ describe("globeLayout destination", () => {
   it("adds nothing when the destination does not answer, has no location, or the trace did not stop quiet", () => {
     const base = globeLayout(finished({ destination: null }));
     expect(base.hops).toHaveLength(4);
-    expect(globeLayout(finished({ destination: { ...dest, reachable: false, port: null, rttMs: null } })).hops).toHaveLength(4);
+    expect(globeLayout(finished({ destination: { ...dest, reachable: false, port: null, rttMs: null, lat: null, lon: null } })).hops).toHaveLength(4);
     expect(globeLayout(finished({ destination: { ...dest, lat: null, lon: null } })).hops).toHaveLength(4);
     expect(globeLayout(finished({ endReason: "limit" })).hops).toHaveLength(4);
+  });
+  it("joins a located destination that does not answer to the anchors, estimated and without a delay", () => {
+    const l = globeLayout(finished({ destination: { ...dest, reachable: false, port: null, rttMs: null } }));
+    expect(l.hops).toHaveLength(5);
+    expect(l.hops.at(-1)).toMatchObject({ ttl: 5, estimated: true, rttMs: null });
+    expect(l.hops.at(-1)!.pos).toEqual(latLonToVec3(35, 139));
   });
   it("never lets the destination stand in for a missing origin", () => {
     const noGeo = { ...origin, lat: null, lon: null };
