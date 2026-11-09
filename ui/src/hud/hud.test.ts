@@ -134,6 +134,90 @@ describe("hud", () => {
     expect(btn().disabled).toBe(false);
   });
 });
+const quietHop = (ttl: number): Hop => hop(ttl, { ip: null, probes: [{ ip: null, rttMs: null }], city: null, geoSource: "estimated" });
+const withHops = (hops: Hop[], target = "example.com", resolvedIp: string | null = "93.184.216.34", done = false) => {
+  const s = [
+    { type: "trace.started", target, resolvedIp, origin } as const,
+    ...hops.map((h) => ({ type: "hop", ...h }) as const),
+    ...(done ? [{ type: "trace.done", reached: true } as const] : []),
+  ].reduce(reduce, initialState);
+  return s;
+};
+const head = (root: ParentNode, sel: string) => root.querySelector<HTMLElement>(`${sel} [role="button"]`)!;
+
+describe("friendly hop list", () => {
+  beforeEach(() => { document.body.replaceChildren(); });
+
+  it("shows the destination once: host plus IP for a hostname, just the IP for an IP", () => {
+    const a = setup();
+    a.hud.render(withHops([hop(1)]), connected);
+    expect(a.root.querySelector(".summary")!.textContent).toBe("To example.com (93.184.216.34) · tracing…");
+    const b = setup();
+    b.hud.render(withHops([hop(1)], "1.1.1.1", "1.1.1.1"), connected);
+    expect(b.root.querySelector(".summary")!.textContent).toBe("To 1.1.1.1 · tracing…");
+  });
+  it("shows the plain summary line only once the trace is done", () => {
+    const { root, hud } = setup();
+    const stats = () => root.querySelector<HTMLElement>(".stats")!;
+    hud.render(withHops([hop(1, { asn: 701, org: "Verizon" }), hop(2, { asn: 701 })]), connected);
+    expect(stats().hidden).toBe(true);
+    hud.render(withHops([hop(1, { asn: 701, org: "Verizon" }), hop(2, { asn: 701 })], "example.com", null, true), connected);
+    expect(stats().hidden).toBe(false);
+    expect(stats().textContent).toBe("2 hops · 1 network · 20 ms");
+    expect(root.querySelector(".summary")!.textContent).toBe("To example.com · reached");
+  });
+  it("collapses silent hops into one quiet row between the responding rows", () => {
+    const { root, hud } = setup();
+    hud.render(withHops([hop(1), quietHop(2), quietHop(3), hop(4)]), connected);
+    const rows = [...root.querySelectorAll<HTMLElement>(".hop")];
+    expect(rows.map((r) => r.classList.contains("quiet"))).toEqual([false, true, false]);
+    expect(rows[1]!.textContent).toContain("2 routers stayed quiet");
+  });
+  it("keeps expanded rows open across re-renders, including a growing quiet run", () => {
+    const { root, hud } = setup();
+    hud.render(withHops([hop(1), quietHop(2)]), connected);
+    head(root, '[data-ttl="1"]').click();
+    head(root, ".quiet").click();
+    hud.render(withHops([hop(1), quietHop(2), quietHop(3)]), connected);
+    expect(head(root, '[data-ttl="1"]').getAttribute("aria-expanded")).toBe("true");
+    expect(head(root, ".quiet").getAttribute("aria-expanded")).toBe("true");
+    expect(root.querySelector(".quiet")!.textContent).toContain("2 routers stayed quiet");
+  });
+  it("drops the expansion of rows that disappear (a new trace starts collapsed)", () => {
+    const { root, hud } = setup();
+    hud.render(withHops([hop(1), hop(2)]), connected);
+    head(root, '[data-ttl="2"]').click();
+    hud.render(withHops([hop(1)]), connected);
+    hud.render(withHops([hop(1), hop(2)]), connected);
+    expect(head(root, '[data-ttl="2"]').getAttribute("aria-expanded")).toBe("false");
+  });
+  it("clicking a hop focuses it in the scene and toggles details; a quiet row only toggles", () => {
+    const { root, hud, h } = setup();
+    hud.render(withHops([hop(1), quietHop(2)]), connected);
+    head(root, '[data-ttl="1"]').click();
+    expect(h.onFocusHop).toHaveBeenCalledWith(1);
+    expect(root.querySelector('[data-ttl="1"]')!.classList.contains("focus")).toBe(true);
+    head(root, ".quiet").click();
+    expect(h.onFocusHop).toHaveBeenCalledTimes(1);
+  });
+  it("highlights the quiet row whose run contains the focused ttl", () => {
+    const { root, hud } = setup();
+    hud.render(withHops([hop(1), quietHop(2), quietHop(3), hop(4)]), connected);
+    hud.setFocus(3);
+    expect(root.querySelector(".quiet")!.classList.contains("focus")).toBe(true);
+    expect(root.querySelector('[data-ttl="1"]')!.classList.contains("focus")).toBe(false);
+    hud.setFocus(null);
+    expect(root.querySelector(".focus")).toBeNull();
+  });
+  it("keeps keyboard focus on the toggled row when the list re-renders", () => {
+    const { root, hud } = setup();
+    hud.render(withHops([hop(1), hop(2)]), connected);
+    head(root, '[data-ttl="2"]').focus();
+    hud.render(withHops([hop(1), hop(2), hop(3)]), connected);
+    expect(document.activeElement).toBe(head(root, '[data-ttl="2"]'));
+  });
+});
+
 describe("install hint", () => {
   const hint = (ua: string) => {
     const root = document.createElement("div");
