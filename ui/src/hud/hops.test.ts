@@ -233,6 +233,19 @@ describe("destination row", () => {
   });
 });
 
+describe("destination row with a location the reply delay ruled out", () => {
+  const placed: Destination = { ...dest, lat: null, lon: null, city: null, geoSource: "estimated" };
+  const el = () => destinationRowEl(
+    document,
+    { kind: "destination", key: "dest", destination: placed, ttl: 8, ttls: [], answers: true, doubt: { place: "San Francisco", rttMs: 9.2 } },
+    false, handlers(),
+  );
+  it("explains why in its details and marks the missing place with ≈", () => {
+    expect(details(el()).textContent).toContain("IP database says San Francisco, but a 9 ms reply can't come from that far.");
+    expect(el().querySelector(".place")!.textContent).toBe("Destination · Cloudflare · ≈ · 18 ms");
+  });
+});
+
 describe("destination row that does not answer", () => {
   const silent: Destination = { ...dest, reachable: false, port: null, rttMs: null, host: null, geoSource: "api" };
   it("reads Destination · network · ≈ place with no delay, and says the last stretch is estimated", () => {

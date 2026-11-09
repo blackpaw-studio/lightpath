@@ -13,6 +13,8 @@ export type Row =
   /** The end of a quiet finish whose destination answers over TCP, or is at least located. `ttl` is its scene entry, null when the scene draws none. */
   | {
       readonly kind: "destination"; readonly key: string; readonly destination: Destination; readonly ttl: number | null;
+      /** The IP database's location was ruled out by the TCP delay, so the destination is an estimate. */
+      readonly doubt?: LocationDoubt;
       /** True when it answered over TCP; false when only its IP location places it (an estimate throughout). */
       readonly answers: boolean;
       /** The silent hops this row replaced; selecting any of them in the scene highlights it. */
@@ -74,14 +76,17 @@ export const isQuiet = (hop: Hop): boolean => hop.probes.every((p) => p.rttMs ==
 
 /** Primary row text: place and short network, or a plain-language name for local hops. */
 export const placeLabel = (hop: Hop, doubted = false): string => {
-  const place = hop.city === null ? (doubted ? "≈" : null) : (hasSolidLocation(hop) ? "" : "≈ ") + hop.city;
+  const place = hop.city === null ? null : (hasSolidLocation(hop) ? "" : "≈ ") + hop.city;
   // CGNAT past the first hop is the ISP's own gear: label it by network/place like any public hop.
   if (isPrivateIp(hop.ip) && !(hop.ttl >= 2 && isCgnat(hop.ip))) {
     if (hop.ttl !== 1) return "Local network";
     return place === null ? "Your router" : "Your router · " + place;
   }
-  const parts = [shortNetworkName(hop.org, hop.asn), place].filter((x): x is string => x !== null);
-  return parts.length > 0 ? parts.join(" · ") : (hop.ip ?? "Unknown");
+  const network = shortNetworkName(hop.org, hop.asn);
+  // A doubted hop has no place to name: mark the estimate by itself, or lead it with the IP.
+  const parts = [network, place ?? (doubted && network !== null ? "≈" : null)].filter((x): x is string => x !== null);
+  if (parts.length > 0) return parts.join(" · ");
+  return (doubted ? "≈ " : "") + (hop.ip ?? "Unknown");
 };
 
 type MeasuredRow = Extract<Row, { kind: "hop" | "quiet" }>;
@@ -142,7 +147,7 @@ export const buildRows = (state: MaybeShown): readonly Row[] => {
   if (dest && (dest.reachable || (dest.lat !== null && dest.lon !== null))) {
     const ttl = sceneDestination(state) === null ? null : destinationTtl(state.hops);
     const ttls = trailing?.kind === "quiet" ? trailing.ttls : [];
-    return [...body, { kind: "destination", key: "dest", destination: dest, ttl, ttls, answers: dest.reachable }];
+    return [...body, { kind: "destination", key: "dest", destination: dest, ttl, ttls, answers: dest.reachable, ...(state.destinationDoubt ? { doubt: state.destinationDoubt } : {}) }];
   }
   const past = lastResponding(state.hops);
   return [

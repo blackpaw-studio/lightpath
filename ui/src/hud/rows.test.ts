@@ -244,7 +244,21 @@ describe("buildRows with doubted locations", () => {
   });
 });
 
+describe("destination doubt in rows", () => {
+  it("attaches the destination's doubt to its row", () => {
+    const placed: Destination = { ...reachable, lat: null, lon: null, city: null, geoSource: "estimated" };
+    const doubt = { place: "San Francisco", rttMs: 9.2 };
+    const s = finished([verizon(1), quiet(2)], { endReason: "quiet", destination: placed });
+    expect(buildRows({ ...s, doubts: new Map(), destinationDoubt: doubt }).at(-1)).toMatchObject({ kind: "destination", doubt });
+  });
+});
+
 describe("placeLabel for a doubted hop", () => {
+  it("falls back to the IP when the hop has no network name", () => {
+    const h = { ...hop(2), ip: "1.2.3.4", asn: null, org: null, geoSource: "estimated" as const, city: null, lat: null, lon: null };
+    expect(placeLabel(h, true)).toBe("≈ 1.2.3.4");
+    expect(placeLabel({ ...h, ip: null }, true)).toBe("≈ Unknown");
+  });
   it("marks the network with a bare ≈ since no place is known", () => {
     const h = { ...hop(2), asn: 701, org: "UUNET - Verizon Business, US", geoSource: "estimated" as const, city: null, lat: null, lon: null };
     expect(placeLabel(h, true)).toBe("Verizon · ≈");

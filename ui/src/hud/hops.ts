@@ -150,9 +150,9 @@ export const quietRowEl = (
   return li;
 };
 
-const destinationPlace = (d: Destination, answers: boolean): string => {
+const destinationPlace = (d: Destination, answers: boolean, doubted: boolean): string => {
   // A destination that does not answer is placed from its IP location alone: always an estimate.
-  const place = d.city === null ? null : (d.geoSource === "estimated" || !answers ? "≈ " : "") + d.city;
+  const place = d.city === null ? (doubted ? "≈" : null) : (d.geoSource === "estimated" || !answers ? "≈ " : "") + d.city;
   return [
     "Destination", shortNetworkName(d.org, d.asn), place, d.rttMs === null ? null : delayText(d.rttMs),
   ].filter((x): x is string => x !== null).join(" · ");
@@ -165,7 +165,7 @@ export const destinationRowEl = (doc: Document, row: DestinationRow, expanded: b
   dot.setAttribute("aria-hidden", "true");
   const text = el(doc, "span", "dest-text");
   text.append(
-    el(doc, "span", "place", destinationPlace(d, row.answers)),
+    el(doc, "span", "place", destinationPlace(d, row.answers, row.doubt !== undefined)),
     el(doc, "span", "subtitle", row.answers ? DESTINATION_SUBTITLE : UNANSWERING_SUBTITLE),
   );
   const detail = detailList(doc, [
@@ -174,6 +174,7 @@ export const destinationRowEl = (doc: Document, row: DestinationRow, expanded: b
     ["Network", asnText(d)],
     ["Reached via", d.port === null ? null : "TCP port " + d.port],
     ["Delay", d.rttMs === null ? null : delayText(d.rttMs)],
+    ["Location", row.doubt ? "Estimated. " + doubtText(row.doubt) : null],
   ]);
   const li = assemble(
     doc, row.key, "hop destination", [dot, text], detail, expanded,
