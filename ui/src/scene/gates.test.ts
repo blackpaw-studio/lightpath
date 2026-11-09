@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { Group, type Object3D } from "three";
+import { Group, Mesh, MeshBasicMaterial, type Object3D } from "three";
 import { describe, expect, it } from "vitest";
 import { latLonToVec3, type Vec3 } from "../geo";
 import { createGates, type GateFrameInput } from "./gates";
@@ -7,7 +7,7 @@ import { ORIGIN_KEY, type Pose } from "./globePoses";
 import { tunnelFrame, tunnelPoint, type TunnelGate } from "./tunnelLayout";
 
 const frame = tunnelFrame(latLonToVec3(40, -74), [0, 1, 0]);
-const gate = (ttl: number, s: number): TunnelGate => ({ ttl, s, title: `hop ${ttl}`, detail: "", color: "#22e6ff", broken: false });
+const gate = (ttl: number, s: number): TunnelGate => ({ ttl, s, title: `hop ${ttl}`, detail: "", color: "#22e6ff", broken: false, estimated: false });
 const at = (s: number): Pose => ({ pos: tunnelPoint(frame, s), scale: 1, opacity: 1, morph: 1 });
 
 const input = (generation: number): GateFrameInput => {
@@ -40,5 +40,35 @@ describe("createGates", () => {
     expect(kept[0]!.children.length).toBeGreaterThan(0); // the mouth ring group, not a label
     gates.dispose();
     expect(parent.children).toHaveLength(0);
+  });
+});
+
+describe("estimated gates", () => {
+  const meshOpacities = (o: Object3D): number[] =>
+    [...(o instanceof Mesh ? [(o.material as MeshBasicMaterial).opacity] : []), ...o.children.flatMap(meshOpacities)];
+  /** Ring opacities of gate 1 for one frame. */
+  const ringOpacities = (estimated: boolean, nowMs: number, reducedMotion: boolean): number[] => {
+    const parent = new Group();
+    const gates = createGates(parent);
+    const base = input(1);
+    gates.update({
+      ...base, nowMs, reducedMotion, gates: [{ ...gate(1, 0.6), estimated }],
+      poses: new Map([[1, at(0.6)]]), depths: new Map([[1, 0.6]]), // no mouth ring: only gate 1 is drawn
+    });
+    return meshOpacities(parent).slice(0, 1); // the ring; later meshes are the label
+  };
+  const times = [0, 130, 270, 410, 590, 770, 1010, 1300];
+
+  it("shimmers but never drops below 60 % of a solid gate's opacity", () => {
+    const solid = ringOpacities(false, 0, false)[0]!;
+    const seen = times.map((t) => ringOpacities(true, t, false)[0]!);
+    for (const o of seen) expect(o).toBeGreaterThanOrEqual(0.6 * solid - 1e-9);
+    expect(Math.min(...seen)).toBeLessThan(Math.max(...seen)); // it does move
+  });
+  it("holds still under reduced motion", () => {
+    expect(ringOpacities(true, 0, true)).toEqual(ringOpacities(true, 777, true));
+  });
+  it("leaves solid gates alone", () => {
+    expect(ringOpacities(false, 0, false)).toEqual(ringOpacities(false, 777, false));
   });
 });

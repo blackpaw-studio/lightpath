@@ -10,6 +10,7 @@ import { createApertureUniforms, createGlobeShell } from "./atmosphere";
 import { createBackdrop } from "./backdrop";
 import { createBloom, type Bloom, type BloomLook } from "./bloom";
 import { applyFraming, createCameraRig, type CameraRig } from "./camera";
+import { sceneDestination } from "../destination";
 import type { BloomTier } from "./frameBudget";
 import { createGlobePoseSource, ORIGIN_KEY, rotateY, type PoseMap, type PoseSource } from "./globePoses";
 import { createArcs, type ArcInfo } from "./arcs";
@@ -73,9 +74,9 @@ export interface GlobeLayerOpacity {
   readonly arcs: number;
 }
 
-const nodeInfos = (state: TraceState, layout: GlobeLayout): Map<number, NodeInfo> => {
+export const nodeInfos = (state: TraceState, layout: GlobeLayout): Map<number, NodeInfo> => {
   const last = layout.hops[layout.hops.length - 1];
-  const reached = state.status === "done" && state.reached === true;
+  const reached = (state.status === "done" && state.reached === true) || sceneDestination(state) !== null;
   return new Map<number, NodeInfo>([
     [ORIGIN_KEY, { color: ORIGIN_ARC_COLOR, estimated: false, timeout: false, role: "origin" }],
     ...layout.hops.map((h): [number, NodeInfo] => [h.ttl, {
@@ -85,7 +86,7 @@ const nodeInfos = (state: TraceState, layout: GlobeLayout): Map<number, NodeInfo
   ]);
 };
 
-const arcInfos = (layout: GlobeLayout): ArcInfo[] =>
+export const arcInfos = (layout: GlobeLayout): ArcInfo[] =>
   layout.hops.map((h, i) => {
     const prev = layout.hops[i - 1];
     return {
