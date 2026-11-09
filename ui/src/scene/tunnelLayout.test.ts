@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { latLonToVec3, type Vec3 } from "../geo";
-import type { Hop } from "../protocol";
+import type { Destination, Hop } from "../protocol";
 import { initialState, type TraceState } from "../reducer";
 import {
   gateLabel, gateSpacing, helixLocal, isTimeoutHop, MAX_RTT_DEPTH, MIN_GAP, RTT_GAP_K, tunnelFrame, tunnelGates, tunnelPoint,
@@ -119,3 +119,27 @@ describe("helix and tunnel frame", () => {
     expect(len(tunnelPoint(f, 0.5))).toBeLessThan(1);
   });
 });
+
+describe("tunnelGates destination", () => {
+  const dest: Destination = {
+    ip: "9.9.9.9", reachable: true, port: 443, rttMs: 18.4, host: null, asn: 13335, org: "CLOUDFLARENET",
+    lat: 35, lon: 139, city: "Tokyo", geoSource: "api",
+  };
+  const finished = (over: Partial<TraceState> = {}): TraceState => ({
+    ...state([hop(1, [5]), hop(2, [null, null, null])]), status: "done", endReason: "quiet", destination: dest, ...over,
+  });
+  it("ends with an estimated Destination gate named by network and delay", () => {
+    const gates = tunnelGates(finished());
+    expect(gates.at(-1)).toMatchObject({ ttl: 3, title: "Destination", detail: "Cloudflare · 18 ms", estimated: true, broken: false });
+    expect(gates.at(-1)!.s).toBeGreaterThan(gates.at(-2)!.s);
+  });
+  it("marks real hops as not estimated", () => {
+    expect(tunnelGates(finished()).slice(0, 2).map((g) => g.estimated)).toEqual([false, false]);
+  });
+  it("has no destination gate when unreachable, unlocated, or the trace did not stop quiet", () => {
+    expect(tunnelGates(finished({ destination: { ...dest, reachable: false, port: null, rttMs: null } }))).toHaveLength(2);
+    expect(tunnelGates(finished({ destination: { ...dest, lat: null, lon: null } }))).toHaveLength(2);
+    expect(tunnelGates(finished({ endReason: "reached" }))).toHaveLength(2);
+  });
+});
+

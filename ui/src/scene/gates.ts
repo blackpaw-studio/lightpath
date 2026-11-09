@@ -7,6 +7,7 @@ import {
 } from "three";
 import { NO_RTT_COLOR } from "../color";
 import { smoothstep } from "./easing";
+import { shimmer } from "./nodes";
 import { ORIGIN_KEY, type Pose, type PoseMap } from "./globePoses";
 import { tunnelTangent, type TunnelFrame, type TunnelGate } from "./tunnelLayout";
 import { TUBE_R } from "./tunnel";
@@ -229,7 +230,9 @@ export const createGates = (parent: Object3D, makeLabel: () => GateLabelView = c
     const radius = (isMouth ? MOUTH_R : GATE_R) * pose.scale * (DOT_FRACTION + (1 - DOT_FRACTION) * morph);
     const d = Math.hypot(pose.pos[0] - input.cameraPos[0], pose.pos[1] - input.cameraPos[1], pose.pos[2] - input.cameraPos[2]);
     const dim = e.broken ? BROKEN_DIM : 1;
-    const alpha = pose.opacity * input.ringFade * fog(d);
+    // An estimated gate shimmers like an estimated node: never below 60 %, still under reduced motion.
+    const flicker = gate?.estimated && !input.reducedMotion ? shimmer(input.nowMs / 1000, (key * 0.618034) % 1) : 1;
+    const alpha = pose.opacity * input.ringFade * fog(d) * (gate?.estimated ? 0.6 + 0.4 * flicker : 1);
 
     e.group.position.set(...pose.pos);
     e.group.scale.setScalar(Math.max(radius, 1e-5));

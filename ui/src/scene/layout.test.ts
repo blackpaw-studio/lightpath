@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { latLonToVec3, slerpGreatCircle } from "../geo";
 import { NO_RTT_COLOR, rttColor } from "../color";
-import type { Hop, Origin } from "../protocol";
+import type { Destination, Hop, Origin } from "../protocol";
 import { initialState, type TraceState } from "../reducer";
 import { globeLayout } from "./layout";
 
@@ -72,3 +72,44 @@ describe("globeLayout", () => {
     expect(l.hops[1]).toMatchObject({ rttMs: null, color: NO_RTT_COLOR, timeout: true });
   });
 });
+
+describe("globeLayout destination", () => {
+  const dest: Destination = {
+    ip: "9.9.9.9", reachable: true, port: 443, rttMs: 20, host: null, asn: null, org: null,
+    lat: 35, lon: 139, city: "Tokyo", geoSource: "api",
+  };
+  const quietHop = (ttl: number): Hop => hop(ttl, { ip: null, probes: [{ ip: null, rttMs: null }] });
+  const finished = (over: Partial<TraceState> = {}): TraceState => ({
+    ...state([hop(1, { lat: 51.5, lon: 0, geoSource: "api" }), quietHop(2), quietHop(3), quietHop(4)]),
+    status: "done", reached: false, endReason: "quiet", destination: dest, ...over,
+  });
+
+  it("appends an estimated destination one ttl past the last hop", () => {
+    const l = globeLayout(finished());
+    const last = l.hops.at(-1)!;
+    expect(last).toMatchObject({ ttl: 5, estimated: true, timeout: false, rttMs: 20, color: rttColor(20) });
+    expect(last.pos).toEqual(latLonToVec3(35, 139));
+  });
+  it("re-estimates the trailing quiet hops on the great circle from the last reply to the destination", () => {
+    const a = latLonToVec3(51.5, 0);
+    const b = latLonToVec3(35, 139);
+    const l = globeLayout(finished());
+    [2, 3, 4].forEach((ttl, i) => {
+      const want = slerpGreatCircle(a, b, (i + 1) / 4);
+      l.hops.find((h) => h.ttl === ttl)!.pos.forEach((x, k) => expect(x).toBeCloseTo(want[k]!, 12));
+    });
+  });
+  it("adds nothing when the destination does not answer, has no location, or the trace did not stop quiet", () => {
+    const base = globeLayout(finished({ destination: null }));
+    expect(base.hops).toHaveLength(4);
+    expect(globeLayout(finished({ destination: { ...dest, reachable: false, port: null, rttMs: null } })).hops).toHaveLength(4);
+    expect(globeLayout(finished({ destination: { ...dest, lat: null, lon: null } })).hops).toHaveLength(4);
+    expect(globeLayout(finished({ endReason: "limit" })).hops).toHaveLength(4);
+  });
+  it("never lets the destination stand in for a missing origin", () => {
+    const noGeo = { ...origin, lat: null, lon: null };
+    const l = globeLayout({ ...finished(), origin: noGeo, hops: [quietHop(1)] });
+    expect(l.origin).toBeNull();
+  });
+});
+

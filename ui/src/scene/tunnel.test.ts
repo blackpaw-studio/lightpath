@@ -5,7 +5,7 @@ import { helixLocal } from "./tunnelLayout";
 import type { TunnelGate } from "./tunnelLayout";
 
 const gate = (ttl: number, s: number, color: string, broken = false): TunnelGate =>
-  ({ ttl, s, color, broken, title: "", detail: "" });
+  ({ ttl, s, color, broken, title: "", detail: "", estimated: false });
 
 const texel = (data: Uint8Array, s: number, length: number): number[] => {
   const i = Math.min(Math.floor((s / length) * RAMP_SIZE), RAMP_SIZE - 1);

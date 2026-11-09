@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -13,6 +14,15 @@ import (
 func (g GeoSource) Valid() bool {
 	switch g {
 	case GeoAPI, GeoHostname, GeoLocal, GeoEstimated:
+		return true
+	}
+	return false
+}
+
+// Valid reports whether r is a known end reason.
+func (r EndReason) Valid() bool {
+	switch r {
+	case EndReached, EndQuiet, EndLimit, EndError, EndCancelled:
 		return true
 	}
 	return false
@@ -30,6 +40,34 @@ func (c ErrorCode) Valid() bool {
 func (m Hop) validate() error {
 	if !m.GeoSource.Valid() {
 		return fmt.Errorf("protocol: hop geoSource %q", m.GeoSource)
+	}
+	return nil
+}
+
+func (m Destination) validate() error {
+	if !m.GeoSource.Valid() {
+		return fmt.Errorf("protocol: destination geoSource %q", m.GeoSource)
+	}
+	if m.Reachable && (m.Port == nil || m.RTTMs == nil) {
+		return errors.New("protocol: reachable destination needs port and rttMs")
+	}
+	if !m.Reachable && (m.Port != nil || m.RTTMs != nil) {
+		return errors.New("protocol: unreachable destination must not carry port or rttMs")
+	}
+	return nil
+}
+
+func (m TraceDone) validate() error {
+	if m.Reason != nil {
+		if !m.Reason.Valid() {
+			return fmt.Errorf("protocol: trace.done reason %q", *m.Reason)
+		}
+		if m.Reached != (*m.Reason == EndReached) {
+			return fmt.Errorf("protocol: trace.done reached=%t contradicts reason %q", m.Reached, *m.Reason)
+		}
+	}
+	if m.Destination != nil {
+		return m.Destination.validate()
 	}
 	return nil
 }
@@ -53,7 +91,8 @@ func jsonName(f reflect.StructField) string {
 
 // requireFields checks that raw has every JSON field of t, recursively, and
 // that only pointer fields are null: the UI's shape() checks require every
-// key to be present and only nullable fields to hold null.
+// key to be present and only nullable fields to hold null. Fields tagged
+// lp:"optional" may be absent, but when present must not be null.
 func requireFields(raw json.RawMessage, t reflect.Type, path string) error {
 	switch t.Kind() {
 	case reflect.Struct:
@@ -65,8 +104,15 @@ func requireFields(raw json.RawMessage, t reflect.Type, path string) error {
 			f := t.Field(i)
 			name := jsonName(f)
 			v, ok := obj[name]
+			optional := f.Tag.Get("lp") == "optional"
 			if !ok {
+				if optional {
+					continue
+				}
 				return fmt.Errorf("protocol: %s.%s is missing", path, name)
+			}
+			if optional && isNull(v) {
+				return fmt.Errorf("protocol: %s.%s must not be null", path, name)
 			}
 			if err := requireValue(v, f.Type, path+"."+name); err != nil {
 				return err

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Hop, Probe } from "../protocol";
+import type { Destination, Hop, Probe } from "../protocol";
 import { initialState, type TraceState } from "../reducer";
 import {
-  delayText, groupHops, hasSolidLocation, isIpLiteral, isPrivateIp, isQuiet, medianRtt, placeLabel, summaryLine,
-  trailingStopKey,
+  buildRows, delayText, groupHops, hasSolidLocation, isIpLiteral, isPrivateIp, isQuiet, medianRtt, placeLabel,
+  quietRunTitle, summaryLine, trailingStopKey,
 } from "./rows";
 
 const probes = (...ms: (number | null)[]): Probe[] => ms.map((rttMs) => ({ ip: rttMs === null ? null : "9.9.9.9", rttMs }));
@@ -185,8 +185,9 @@ describe("summaryLine", () => {
 });
 
 describe("trailingStopKey", () => {
-  const done = (hops: Hop[], reached: boolean | null): TraceState => ({ ...initialState, status: "done", target: "x", hops, reached });
-  it("names the trailing quiet run of a finished, unreached trace", () => {
+  const done = (hops: Hop[], reached: boolean | null, endReason: TraceState["endReason"] = reached === false ? "limit" : "reached"): TraceState =>
+    ({ ...initialState, status: "done", target: "x", hops, reached, endReason });
+  it("names the trailing quiet run of a trace that ran out of hops", () => {
     const s = done([hop(1), quiet(2), hop(3), quiet(4), quiet(5)], false);
     expect(trailingStopKey(s, groupHops(s.hops))).toBe("q4");
   });
@@ -196,5 +197,94 @@ describe("trailingStopKey", () => {
     expect(trailingStopKey({ ...done(hops, null), status: "running" }, groupHops(hops))).toBeNull();
     const ends = [quiet(1), hop(2)];
     expect(trailingStopKey(done(ends, false), groupHops(ends))).toBeNull();
+  });
+  it("keys on the limit end reason: a quiet or cancelled finish has its own ending", () => {
+    const hops = [hop(1), quiet(2)];
+    expect(trailingStopKey(done(hops, false, "quiet"), groupHops(hops))).toBeNull();
+    expect(trailingStopKey(done(hops, false, "limit"), groupHops(hops))).toBe("q2");
+  });
+});
+
+const reachable: Destination = {
+  ip: "104.16.1.1", reachable: true, port: 443, rttMs: 18.4, host: null, asn: 13335, org: "CLOUDFLARENET",
+  lat: 40.7, lon: -74, city: "New York", geoSource: "api",
+};
+const unreachable: Destination = {
+  ip: "203.0.113.9", reachable: false, port: null, rttMs: null, host: null, asn: null, org: null,
+  lat: null, lon: null, city: null, geoSource: "estimated",
+};
+const verizon = (ttl: number): Hop => hop(ttl, { asn: 701, org: "Verizon" });
+const cloudflare = (ttl: number): Hop => hop(ttl, { asn: 13335, org: "CLOUDFLARENET" });
+const finished = (hops: Hop[], over: Partial<TraceState> = {}): TraceState =>
+  ({ ...initialState, status: "done", target: "x", hops, reached: false, endReason: "limit", ...over });
+
+describe("quietRunTitle", () => {
+  it.each<[string, number, Hop | null, Hop | null, string]>([
+    ["same network", 4, verizon(2), verizon(7), "4 routers inside Verizon's network"],
+    ["different networks", 3, verizon(2), cloudflare(6), "3 routers between Verizon and Cloudflare"],
+    ["a known name ending in s (Lumen) takes a bare apostrophe", 2, hop(1, { asn: 3356, org: "LUMEN" }), hop(4, { asn: 3356 }), "2 routers inside Lumen's network"],
+    ["a name that really ends in s", 2, hop(1, { asn: 64500, org: "Acme Hosts" }), hop(4, { asn: 64500, org: "Acme Hosts" }), "2 routers inside Acme Hosts' network"],
+    ["singular, same network", 1, verizon(2), verizon(4), "1 router inside Verizon's network"],
+    ["singular, different networks", 1, verizon(2), cloudflare(4), "1 router between Verizon and Cloudflare"],
+    ["unknown network before", 2, hop(1), verizon(4), "2 routers stayed quiet"],
+    ["unknown network after", 2, verizon(1), hop(4), "2 routers stayed quiet"],
+    ["no neighbour before", 3, null, verizon(4), "3 routers stayed quiet"],
+    ["no neighbour after", 1, verizon(1), null, "1 router stayed quiet"],
+  ])("%s", (_name, n, before, after, want) => {
+    expect(quietRunTitle(n, before, after)).toBe(want);
+  });
+});
+
+describe("buildRows", () => {
+  it("names a gap between two responding hops by its neighbours", () => {
+    const rows = buildRows(finished([verizon(1), quiet(2), quiet(3), quiet(4), verizon(5), quiet(6), cloudflare(7)], { reached: true, endReason: "reached" }));
+    const titles = rows.flatMap((r) => (r.kind === "quiet" ? [r.title] : []));
+    expect(titles).toEqual(["3 routers inside Verizon's network", "1 router between Verizon and Cloudflare"]);
+  });
+  it("leaves a run before the first reply and an unfinished trailing run on the default copy", () => {
+    const rows = buildRows(finished([quiet(1), quiet(2), verizon(3), quiet(4)]));
+    expect(rows.flatMap((r) => (r.kind === "quiet" ? [r.title] : []))).toEqual(["2 routers stayed quiet", "1 router stayed quiet"]);
+  });
+  it("matches groupHops apart from the gap names for limit and reached finishes", () => {
+    for (const over of [{ endReason: "limit" as const }, { endReason: "reached" as const, reached: true }]) {
+      const s = finished([verizon(1), quiet(2), verizon(3), quiet(4), quiet(5)], over);
+      expect(buildRows(s).map((r) => ({ kind: r.kind, key: r.key }))).toEqual(groupHops(s.hops).map((r) => ({ kind: r.kind, key: r.key })));
+    }
+  });
+  it("replaces the trailing quiet run of a quiet finish with a reachable destination row", () => {
+    const s = finished([verizon(1), verizon(2), quiet(3), quiet(4), quiet(5), quiet(6), quiet(7)], { endReason: "quiet", destination: reachable });
+    const rows = buildRows(s);
+    expect(rows.map((r) => r.kind)).toEqual(["hop", "hop", "destination"]);
+    expect(rows.at(-1)).toMatchObject({ kind: "destination", key: "dest", destination: reachable, ttl: 8, ttls: [3, 4, 5, 6, 7] });
+  });
+  it("replaces it with a closing row naming the last network when the destination does not answer", () => {
+    const s = finished([hop(1, { ip: "192.168.1.1" }), verizon(2), quiet(3), quiet(4), quiet(5), quiet(6), quiet(7)], { endReason: "quiet", destination: unreachable });
+    const rows = buildRows(s);
+    expect(rows.map((r) => r.kind)).toEqual(["hop", "hop", "end"]);
+    expect(rows.at(-1)).toMatchObject({ kind: "end", key: "end", pastLabel: "Verizon", ttls: [3, 4, 5, 6, 7] });
+  });
+  it("closes with an end row when a quiet finish carries no destination at all", () => {
+    const rows = buildRows(finished([verizon(1), quiet(2)], { endReason: "quiet", destination: null }));
+    expect(rows.at(-1)).toMatchObject({ kind: "end" });
+  });
+  it("keeps the trailing run while the trace is still running", () => {
+    const rows = buildRows({ ...finished([verizon(1), quiet(2)]), status: "running", endReason: null });
+    expect(rows.map((r) => r.kind)).toEqual(["hop", "quiet"]);
+  });
+  it("gives the destination row a scene ttl only when the scene will draw it", () => {
+    const base = finished([verizon(1), quiet(2)], { endReason: "quiet" });
+    expect(buildRows({ ...base, destination: reachable }).at(-1)).toMatchObject({ ttl: 3 });
+    expect(buildRows({ ...base, destination: { ...reachable, lat: null, lon: null } }).at(-1)).toMatchObject({ ttl: null });
+  });
+});
+
+describe("summaryLine for quiet finishes", () => {
+  it("reads N+ hops when the destination answers: hops through the last reply, plus one", () => {
+    const s = finished([hop(1, { ip: "192.168.1.1" }), verizon(2), quiet(3), quiet(4), quiet(5), quiet(6), quiet(7)], { endReason: "quiet", destination: reachable });
+    expect(summaryLine(s)).toBe("3+ hops · 1 network");
+  });
+  it("stays as before when the destination does not answer", () => {
+    const s = finished([hop(1, { ip: "192.168.1.1" }), verizon(2), quiet(3), quiet(4), quiet(5), quiet(6), quiet(7)], { endReason: "quiet", destination: unreachable });
+    expect(summaryLine(s)).toBe("2 hops · 1 network");
   });
 });

@@ -3,7 +3,7 @@ import type { ConnState } from "../conn";
 import type { TraceState } from "../reducer";
 import { rowEl, type RowHandlers } from "./hops";
 import { installPanel } from "./install";
-import { groupHops, isIpLiteral, summaryLine, trailingStopKey } from "./rows";
+import { buildRows, isIpLiteral, summaryLine, trailingStopKey } from "./rows";
 import { sparkline } from "./sparkline";
 
 export interface HudHandlers {
@@ -44,8 +44,9 @@ const summary = (s: TraceState, connected: boolean): string => {
   if (s.status === "idle" || s.target === null) return "Enter a host to trace the route from here.";
   const ip = s.resolvedIp && !isIpLiteral(s.target) ? " (" + s.resolvedIp + ")" : "";
   const runningTail = connected ? " · tracing…" : " · disconnected: trace interrupted";
-  const tail =
-    s.status === "done" ? (s.reached ? " · reached" : " · not reached") : s.status === "running" ? runningTail : "";
+  const answers = s.endReason === "quiet" && s.destination?.reachable === true;
+  const doneTail = s.reached ? " · reached" : answers ? " · destination answers" : " · not reached";
+  const tail = s.status === "done" ? doneTail : s.status === "running" ? runningTail : "";
   return "To " + s.target + ip + tail;
 };
 
@@ -105,7 +106,7 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
     list
       .querySelectorAll<HTMLElement>(".hop")
       .forEach((r) => {
-        const ttls = r.dataset.ttl !== undefined ? [r.dataset.ttl] : (r.dataset.ttls ?? "").split(" ");
+        const ttls = [...(r.dataset.ttl !== undefined ? [r.dataset.ttl] : []), ...(r.dataset.ttls ?? "").split(" ")];
         r.classList.toggle("focus", focus !== null && ttls.includes(String(focus)));
       });
 
@@ -129,7 +130,7 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
   };
   /** Rebuilds the list but keeps the scroll offset and keyboard focus the user had. */
   const renderRows = (state: TraceState): void => {
-    const rows = groupHops(state.hops);
+    const rows = buildRows(state);
     const stopKey = trailingStopKey(state, rows);
     expanded = new Set(rows.map((r) => r.key).filter((k) => expanded.has(k)));
     const active = doc.activeElement;

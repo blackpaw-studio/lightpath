@@ -3,6 +3,7 @@ package live_test
 import (
 	"context"
 	"errors"
+	"github.com/blackpaw-studio/lightpath/internal/reach"
 	"io"
 	"net"
 	"net/http"
@@ -140,6 +141,8 @@ func TestLiveSourceOverWebSocketRestartDropsOldTrace(t *testing.T) {
 		Command:  func(tgt string) (string, []string) { return target.CommandFor(tgt, "linux") },
 		Enricher: enricher,
 		Origin:   originSource{},
+		Reach:    noReach{},
+		Clock:    enrich.RealClock,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -238,3 +241,8 @@ func TestLiveSourceOverWebSocketRestartDropsOldTrace(t *testing.T) {
 		}
 	}
 }
+
+// noReach reports every destination as unreachable without touching the network.
+type noReach struct{}
+
+func (noReach) Check(context.Context, netip.Addr) reach.Result { return reach.Result{} }

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState, reduce } from "../reducer";
 import { mount } from "./hud";
-import type { Hop } from "../protocol";
+import type { Destination, Hop } from "../protocol";
 
 const hop = (ttl: number, over: Partial<Hop> = {}): Hop => ({
   ttl, probes: [{ ip: "9.9.9.9", rttMs: ttl * 10 }], ip: "9.9.9.9", host: null, asn: null, org: null,
@@ -243,3 +243,26 @@ describe("install hint", () => {
     expect(hint("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/120 Safari/537.36")).toContain("local network access");
   });
 });
+
+describe("destination row focus", () => {
+  it("lights up when a scene node it replaced is selected, or its own entry", () => {
+    const { root, hud } = setup();
+    const dest: Destination = {
+      ip: "9.9.9.9", reachable: true, port: 443, rttMs: 9, host: null, asn: null, org: null, lat: 1, lon: 2, city: "X", geoSource: "api",
+    };
+    const s = [
+      { type: "trace.started", target: "example.com", resolvedIp: null, origin } as const,
+      { type: "hop", ...hop(1) } as const, { type: "hop", ...quietHop(2) } as const, { type: "hop", ...quietHop(3) } as const,
+      { type: "trace.done", reached: false, reason: "quiet", destination: dest } as const,
+    ].reduce(reduce, initialState);
+    hud.render(s, connected);
+    const row = () => root.querySelector(".hop.destination")!;
+    hud.setFocus(3); // a quiet hop the destination row replaced
+    expect(row().classList.contains("focus")).toBe(true);
+    hud.setFocus(4); // the destination's own scene entry
+    expect(row().classList.contains("focus")).toBe(true);
+    hud.setFocus(1);
+    expect(row().classList.contains("focus")).toBe(false);
+  });
+});
+

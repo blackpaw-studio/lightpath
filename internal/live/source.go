@@ -5,9 +5,11 @@ package live
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"sync"
 
 	"github.com/blackpaw-studio/lightpath/internal/protocol"
+	"github.com/blackpaw-studio/lightpath/internal/reach"
 	"github.com/blackpaw-studio/lightpath/internal/target"
 	"github.com/blackpaw-studio/lightpath/internal/trace"
 )
@@ -29,6 +31,12 @@ type OriginSource interface {
 	Get(ctx context.Context) protocol.Origin
 }
 
+// Reacher checks whether the destination accepts TCP connections
+// (reach.Checker does). It must return promptly once ctx is cancelled.
+type Reacher interface {
+	Check(ctx context.Context, ip netip.Addr) reach.Result
+}
+
 // Config wires a Source. Command maps a validated target to an argv, e.g.
 // target.CommandFor bound to runtime.GOOS. Validate defaults to target.Validate.
 type Config struct {
@@ -36,6 +44,9 @@ type Config struct {
 	Command  func(target string) (name string, args []string)
 	Enricher Enricher
 	Origin   OriginSource
+	Reach    Reacher
+	// Clock times the destination grace period (enrich.RealClock in production).
+	Clock    reach.Clock
 	Validate func(target string) error
 }
 
@@ -45,8 +56,8 @@ type Source struct{ cfg Config }
 
 // New returns a Source, or an error if a dependency is missing.
 func New(cfg Config) (*Source, error) {
-	if cfg.Runner == nil || cfg.Command == nil || cfg.Enricher == nil || cfg.Origin == nil {
-		return nil, errors.New("live: config needs a runner, command, enricher and origin")
+	if cfg.Runner == nil || cfg.Command == nil || cfg.Enricher == nil || cfg.Origin == nil || cfg.Reach == nil || cfg.Clock == nil {
+		return nil, errors.New("live: config needs a runner, command, enricher, origin, reach checker and clock")
 	}
 	if cfg.Validate == nil {
 		cfg.Validate = target.Validate
@@ -87,12 +98,14 @@ type traceRun struct {
 	emit    func(protocol.ServerMsg)
 	started bool
 	waits   []func()
+	dest    *destRun
 }
 
 func (r *traceRun) handle(ev trace.Event) {
 	switch e := ev.(type) {
 	case trace.Header:
 		r.start(e.ResolvedIP)
+		r.startDest(e.ResolvedIP)
 	case trace.HopEvent:
 		r.start("")
 		hop := e.Hop
@@ -102,9 +115,14 @@ func (r *traceRun) handle(ev trace.Event) {
 		r.waits = append(r.waits, r.src.cfg.Enricher.Enrich(r.ctx, hop, r.emit))
 	case trace.Done:
 		r.waitAll()
-		r.emitIfLive(protocol.TraceDone{Reached: e.Reached})
+		done := protocol.TraceDone{Reached: e.Reached, Destination: r.destWait(true)}
+		if e.Reason.Valid() {
+			done.Reason = &e.Reason
+		}
+		r.emitIfLive(done)
 	case trace.ErrorEvent:
 		r.waitAll()
+		r.destWait(false) // an error has no use for the destination: don't delay it
 		r.emitIfLive(protocol.Error{Code: e.Code, Message: e.Message})
 	}
 }
@@ -139,8 +157,10 @@ func (r *traceRun) waitAll() {
 	r.waits = nil
 }
 
-// drain cancels the trace and joins all enrichment before Trace returns.
+// drain cancels the trace and joins all enrichment and the destination work
+// before Trace returns.
 func (r *traceRun) drain(cancel context.CancelFunc) {
 	cancel()
 	r.waitAll()
+	r.destWait(false)
 }

@@ -46,7 +46,7 @@ describe("createTunnelPoseSource", () => {
   const origin = latLonToVec3(40, -74);
   const frame = tunnelFrame(origin, [0, 1, 0]);
   const gate = (ttl: number, s: number): TunnelGate =>
-    ({ ttl, s, title: "", detail: "", color: "#22e6ff", broken: false });
+    ({ ttl, s, title: "", detail: "", color: "#22e6ff", broken: false, estimated: false });
   const input = (nowMs: number, generation = 0): PoseInput => ({
     layout: { generation, origin, hops: [] }, nowMs, dtMs: 1000 / 60, reducedMotion: false, rotationY: 0,
   });

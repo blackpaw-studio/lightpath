@@ -1,8 +1,11 @@
 // Pure tunnel geometry: where each hop's gate sits along the helix, and the
 // local frame anchoring the tunnel at the origin node (+z = inward normal).
 import { meanRtt, NO_RTT_COLOR, rttColor } from "../color";
+import { destinationTtl, sceneDestination } from "../destination";
 import { add, cross, dot, normalize, scale, sub, type Vec3 } from "../geo";
 import type { Hop } from "../protocol";
+import { shortNetworkName } from "../hud/network";
+import { delayText } from "../hud/rows";
 import type { TraceState } from "../reducer";
 
 /** Smallest gap between consecutive gates (world units). */
@@ -28,6 +31,8 @@ export interface TunnelGate extends GateLabel {
   readonly color: string;
   /** Timeout-only hop: drawn as a dim, broken ring. */
   readonly broken: boolean;
+  /** Position not measured (the destination of a quiet finish): drawn like an estimated node. */
+  readonly estimated: boolean;
 }
 
 /** Local tunnel frame, right-handed (u × v = n): v = screen up, n = inward normal (down the tunnel). */
@@ -69,14 +74,22 @@ export const gateLabel = (h: Hop): GateLabel => {
   };
 };
 
-/** Pure: reducer state → gates in ttl order. */
+/** Pure: reducer state → gates in ttl order, plus the estimated destination gate of a quiet finish. */
 export const tunnelGates = (state: TraceState): TunnelGate[] => {
-  const rtts = state.hops.map((h) => meanRtt(h.probes));
+  const dest = sceneDestination(state);
+  const rtts = [...state.hops.map((h) => meanRtt(h.probes)), ...(dest ? [dest.rttMs] : [])];
   const s = gateSpacing(rtts);
-  return state.hops.map((h, i) => {
+  const hopGates = state.hops.map((h, i): TunnelGate => {
     const broken = isTimeoutHop(h);
-    return { ...gateLabel(h), s: s[i]!, broken, color: broken ? NO_RTT_COLOR : rttColor(rtts[i] ?? null) };
+    return { ...gateLabel(h), s: s[i]!, broken, estimated: false, color: broken ? NO_RTT_COLOR : rttColor(rtts[i] ?? null) };
   });
+  if (!dest) return hopGates;
+  const net = shortNetworkName(dest.org, dest.asn);
+  const delay = dest.rttMs === null ? null : delayText(dest.rttMs);
+  return [...hopGates, {
+    ttl: destinationTtl(state.hops), title: "Destination", detail: [net, delay].filter((x) => x !== null).join(" · "),
+    s: s[hopGates.length]!, broken: false, estimated: true, color: dest.rttMs === null ? NO_RTT_COLOR : rttColor(dest.rttMs),
+  }];
 };
 
 /** Helix point in the local frame; starts on the axis heading straight down +z. */

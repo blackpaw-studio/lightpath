@@ -1,4 +1,4 @@
-import type { ErrorCode, Hop, Origin, ServerMsg } from "./protocol";
+import type { Destination, EndReason, ErrorCode, Hop, Origin, ServerMsg } from "./protocol";
 
 /** Errors raised by the UI itself rather than sent by the agent. */
 export type ClientErrorCode = "disconnected" | "cancelled";
@@ -10,13 +10,18 @@ export interface TraceState {
   readonly origin: Origin | null;
   readonly hops: readonly Hop[];
   readonly reached: boolean | null;
+  /** Why the trace ended; null while idle or running. */
+  readonly endReason: EndReason | null;
+  /** The end of the path as the agent measured it; null unless the agent sent one. */
+  readonly destination: Destination | null;
   readonly error: { readonly code: ErrorCode | ClientErrorCode; readonly message: string } | null;
   /** Bumped by every trace.started, so views can tell a new trace from the old one even for the same target. */
   readonly generation: number;
 }
 
 export const initialState: TraceState = {
-  status: "idle", target: null, resolvedIp: null, origin: null, hops: [], reached: null, error: null, generation: 0,
+  status: "idle", target: null, resolvedIp: null, origin: null, hops: [], reached: null, endReason: null, destination: null, error: null,
+  generation: 0,
 };
 
 const withHop = (hops: readonly Hop[], hop: Hop): readonly Hop[] =>
@@ -43,9 +48,12 @@ export const reduce = (state: TraceState, msg: ServerMsg): TraceState => {
       return { ...state, hops: state.hops.map((h) => (h.ttl === patch.ttl ? { ...h, ...patch } : h)) };
     }
     case "trace.done":
-      return { ...state, status: "done", reached: msg.reached };
+      return {
+        ...state, status: "done", reached: msg.reached,
+        endReason: msg.reason ?? (msg.reached ? "reached" : "limit"), destination: msg.destination ?? null,
+      };
     case "error":
-      return { ...state, status: "error", error: { code: msg.code, message: msg.message } };
+      return { ...state, status: "error", endReason: "error", error: { code: msg.code, message: msg.message } };
   }
 };
 
@@ -56,4 +64,6 @@ export const reduce = (state: TraceState, msg: ServerMsg): TraceState => {
  * showing an active trace. Other states are returned as-is.
  */
 export const interrupt = (state: TraceState, code: ClientErrorCode, message: string): TraceState =>
-  state.status === "running" ? { ...state, status: "error", error: { code, message } } : state;
+  state.status === "running"
+    ? { ...state, status: "error", endReason: code === "cancelled" ? "cancelled" : "error", error: { code, message } }
+    : state;

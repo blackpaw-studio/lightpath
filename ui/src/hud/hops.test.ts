@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import type { Hop } from "../protocol";
-import { hopRowEl, quietRowEl, rttText, QUIET_SUBTITLE, STOPPED_SUBTITLE, type RowHandlers } from "./hops";
+import type { Destination, Hop } from "../protocol";
+import {
+  destinationRowEl, DESTINATION_SUBTITLE, endRowEl, hopRowEl, quietRowEl, rowEl, rttText, QUIET_SUBTITLE, STOPPED_SUBTITLE,
+  type RowHandlers,
+} from "./hops";
 import type { Row } from "./rows";
 
 const hop = (over: Partial<Hop> = {}): Hop => ({
@@ -159,5 +162,87 @@ describe("quiet row", () => {
     const el = quietRow([2]);
     head(el).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     expect(head(el).getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+describe("named quiet row", () => {
+  it("shows the title built from the neighbouring networks instead of the generic copy", () => {
+    const el = quietRowEl(document, { kind: "quiet", key: "q4", ttls: [4, 5, 6], title: "3 routers inside Verizon's network" }, false, handlers());
+    expect(el.querySelector(".place")!.textContent).toBe("3 routers inside Verizon's network");
+    expect(el.dataset.ttls).toBe("4 5 6");
+    expect(details(el).querySelector("dd")!.textContent).toBe("4, 5, 6");
+  });
+});
+
+const dest: Destination = {
+  ip: "104.16.1.1", reachable: true, port: 443, rttMs: 18.4, host: "edge.example.net", asn: 13335, org: "CLOUDFLARENET",
+  lat: 40.7, lon: -74, city: "New York", geoSource: "api",
+};
+const destRow = (d: Destination, ttl: number | null, hs = handlers()) =>
+  destinationRowEl(document, { kind: "destination", key: "dest", destination: d, ttl, ttls: [5, 6, 7] }, false, hs);
+
+describe("destination row", () => {
+  it("reads Destination · network · place · delay with the direct-answer note", () => {
+    const el = destRow(dest, 8);
+    expect(el.querySelector(".place")!.textContent).toBe("Destination · Cloudflare · New York · 18 ms");
+    expect(el.querySelector(".subtitle")!.textContent).toBe(DESTINATION_SUBTITLE);
+    expect(DESTINATION_SUBTITLE).toBe("Answers directly; routers near it stay quiet.");
+  });
+  it("prefixes an estimated place with ≈ and drops parts it lacks", () => {
+    expect(destRow({ ...dest, geoSource: "estimated" }, 8).querySelector(".place")!.textContent).toBe("Destination · Cloudflare · ≈ New York · 18 ms");
+    expect(destRow({ ...dest, org: null, asn: null, city: null, lat: null, lon: null }, null).querySelector(".place")!.textContent).toBe("Destination · 18 ms");
+  });
+  it("lists IP, TCP port and delay in the details", () => {
+    const text = details(destRow(dest, 8)).textContent!;
+    expect(text).toContain("104.16.1.1");
+    expect(text).toContain("TCP port 443");
+    expect(text).toContain("18 ms");
+  });
+  it("focuses the scene's destination entry when it has one", () => {
+    const hs = handlers();
+    const el = destRow(dest, 8, hs);
+    expect(el.dataset.ttl).toBe("8");
+    head(el).click();
+    expect(hs.onFocus).toHaveBeenCalledWith(8);
+  });
+  it("carries the silent hops it replaced, so selecting those scene nodes can highlight it", () => {
+    expect(destRow(dest, 8).dataset.ttls).toBe("5 6 7");
+    expect(destRow(dest, null).dataset.ttls).toBe("5 6 7");
+  });
+  it("only toggles when the scene has no entry for it", () => {
+    const hs = handlers();
+    const el = destRow(dest, null, hs);
+    expect(el.dataset.ttl).toBeUndefined();
+    head(el).click();
+    expect(hs.onFocus).not.toHaveBeenCalled();
+    expect(hs.onToggle).toHaveBeenCalledWith("dest", true);
+  });
+  it("escapes untrusted strings", () => {
+    const el = destRow({ ...dest, org: "<img src=x onerror=alert(1)>", asn: null, city: "<b>x</b>" }, 8);
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.querySelector("b")).toBeNull();
+  });
+});
+
+describe("closing row", () => {
+  const end = (hs = handlers()) =>
+    endRowEl(document, { kind: "end", key: "end", ttls: [3, 4], pastLabel: "Verizon · New York", destination: null }, false, hs);
+  it("says the destination does not answer and where the path ends", () => {
+    const el = end();
+    expect(el.querySelector(".place")!.textContent).toBe("The destination doesn't answer traces");
+    expect(el.querySelector(".subtitle")!.textContent).toBe("The path ends somewhere past Verizon · New York.");
+    expect(el.querySelector(".dot")).toBeNull();
+  });
+  it("lists the silent hops in its details and never moves the scene", () => {
+    const hs = handlers();
+    const el = end(hs);
+    expect(details(el).textContent).toContain("3, 4");
+    head(el).click();
+    expect(hs.onFocus).not.toHaveBeenCalled();
+  });
+  it("rowEl dispatches every row kind", () => {
+    const hs = handlers();
+    expect(rowEl(document, { kind: "end", key: "end", ttls: [], pastLabel: "x", destination: null }, false, hs).dataset.key).toBe("end");
+    expect(rowEl(document, { kind: "destination", key: "dest", destination: dest, ttl: 2, ttls: [] }, false, hs).dataset.key).toBe("dest");
   });
 });

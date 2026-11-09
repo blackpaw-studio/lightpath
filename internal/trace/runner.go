@@ -19,13 +19,21 @@ const (
 	// killWaitDelay bounds how long Wait lingers after a kill for the
 	// process's output to drain.
 	killWaitDelay = 2 * time.Second
+	// QuietLimit is how many consecutive silent hops, after at least one
+	// reply, end a trace early: what follows is almost always a destination
+	// that drops probes, not routers.
+	QuietLimit = 5
 	// tailBytes of raw output are kept to explain a failure.
 	tailBytes = 512
 )
 
 // Done reports that traceroute finished. Reached is true when the last hop is
-// the resolved target.
-type Done struct{ Reached bool }
+// the resolved target; Reason says why the trace ended (reached, quiet or
+// limit).
+type Done struct {
+	Reached bool
+	Reason  protocol.EndReason
+}
 
 // ErrorEvent reports a failed trace using the protocol's error codes.
 type ErrorEvent struct {
@@ -75,18 +83,25 @@ func (r Runner) run(ctx context.Context, name string, args []string, out chan<- 
 	if start == nil {
 		start = ExecCommand
 	}
-	cmd, err := start(ctx, name, args)
+	// procCtx owns the traceroute process and the parser. Cancelling it
+	// kills the process just like a caller cancel, but leaves ctx live so the
+	// early stop can still report a normal finish.
+	procCtx, stopProc := context.WithCancel(ctx)
+	defer stopProc()
+	cmd, err := start(procCtx, name, args)
 	if err != nil {
 		sendEvent(ctx, out, startError(name, err))
 		return
 	}
 
 	tail := &tailBuffer{}
-	parsed := ParseContext(ctx, io.TeeReader(cmd.Output(), tail))
+	parsed := ParseContext(procCtx, io.TeeReader(cmd.Output(), tail))
 	var (
 		header  *Header
 		lastHop *protocol.Hop
 		hops    int
+		quiet   quietCounter
+		stopped bool
 	)
 	for ev := range parsed {
 		switch e := ev.(type) {
@@ -96,18 +111,52 @@ func (r Runner) run(ctx context.Context, name string, args []string, out chan<- 
 			hop := e.Hop
 			lastHop = &hop
 			hops++
+			stopped = quiet.observe(hop) >= QuietLimit
 		}
-		if !sendEvent(ctx, out, ev) {
+		if !sendEvent(ctx, out, ev) || stopped {
 			break
 		}
 	}
-	for range parsed { // join the parser goroutine
+	if stopped {
+		stopProc()
+	}
+	for range parsed { // join the parser goroutine, discarding what the stop left behind
 	}
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil {
+		return // a user cancel wins over any terminal event
+	}
+	if stopped {
+		sendEvent(ctx, out, Done{Reached: false, Reason: protocol.EndQuiet})
 		return
 	}
 	sendEvent(ctx, out, finish(header, lastHop, hops, waitErr, tail.String()))
+}
+
+// quietCounter counts consecutive silent hops once a hop has replied.
+type quietCounter struct {
+	replied bool
+	run     int
+}
+
+// observe folds hop in and returns the current run of silent hops.
+func (q *quietCounter) observe(hop protocol.Hop) int {
+	switch {
+	case !isQuiet(hop):
+		q.replied, q.run = true, 0
+	case q.replied:
+		q.run++
+	}
+	return q.run
+}
+
+func isQuiet(hop protocol.Hop) bool {
+	for _, p := range hop.Probes {
+		if p.RTTMs != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func sendEvent(ctx context.Context, out chan<- Event, ev Event) bool {
@@ -130,7 +179,10 @@ func startError(name string, err error) ErrorEvent {
 // completed trace; without hops it is a failure.
 func finish(header *Header, lastHop *protocol.Hop, hops int, waitErr error, tail string) Event {
 	if hops > 0 {
-		return Done{Reached: reached(header, lastHop)}
+		if reached(header, lastHop) {
+			return Done{Reached: true, Reason: protocol.EndReached}
+		}
+		return Done{Reached: false, Reason: protocol.EndLimit}
 	}
 	msg := "traceroute produced no hops (unrecognised output format)"
 	if waitErr != nil {

@@ -107,7 +107,14 @@ var testOrigin = protocol.Origin{PublicIP: strp("203.0.113.9"), City: strp("Toro
 
 func newTestSource(t *testing.T, r *fakeRunner, e *fakeEnricher) *Source {
 	t.Helper()
+	return newTestSourceReach(t, r, e, &fakeReach{})
+}
+
+func newTestSourceReach(t *testing.T, r *fakeRunner, e Enricher, rc Reacher) *Source {
+	t.Helper()
 	s, err := New(Config{
+		Reach:    rc,
+		Clock:    newFakeClock(),
 		Runner:   r,
 		Command:  func(target string) (string, []string) { return "traceroute", []string{"-n", target} },
 		Enricher: e,

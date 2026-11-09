@@ -3,7 +3,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Hop } from "../src/protocol";
-import { groupHops, type Row } from "../src/hud/rows";
+import { buildRows, type Row } from "../src/hud/rows";
+import { initialState } from "../src/reducer";
 
 type Event = { type: string; ttl?: number } & Record<string, unknown>;
 
@@ -20,5 +21,5 @@ export const expectedHops = (file: string): Hop[] => {
   return [...rows.values()].sort((a, b) => a.ttl - b.ttl);
 };
 
-/** The hop-list rows the HUD shows for a fixture: silent runs collapsed. */
-export const expectedRows = (file: string): readonly Row[] => groupHops(expectedHops(file));
+/** The hop-list rows the HUD shows for a fixture's hops: silent runs collapsed and named. */
+export const expectedRows = (file: string): readonly Row[] => buildRows({ ...initialState, hops: expectedHops(file) });

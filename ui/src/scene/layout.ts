@@ -1,4 +1,5 @@
 import { NO_RTT_COLOR, meanRtt, rttColor } from "../color";
+import { destinationTtl, sceneDestination } from "../destination";
 import { estimatePosition, type LocatedHop } from "../estimate";
 import { latLonToVec3, type Vec3 } from "../geo";
 import type { Hop } from "../protocol";
@@ -36,16 +37,24 @@ export const globeLayout = (state: TraceState, fallbackOrigin: Vec3 | null = nul
   const o = state.origin;
   const origin = o && o.lat !== null && o.lon !== null ? latLonToVec3(o.lat, o.lon) : (anchors[0]?.pos ?? fallbackOrigin);
   if (!origin) return { generation: state.generation, origin: null, hops: [] };
+  // A quiet finish whose destination answers: the destination joins the anchors, so the
+  // trailing silent hops spread along the great circle toward it instead of piling up.
+  const dest = sceneDestination(state);
+  const destHop: LaidHop | null = dest && dest.lat !== null && dest.lon !== null ? {
+    ttl: destinationTtl(state.hops), pos: latLonToVec3(dest.lat, dest.lon), estimated: true, timeout: false,
+    rttMs: dest.rttMs, color: dest.rttMs === null ? NO_RTT_COLOR : rttColor(dest.rttMs),
+  } : null;
+  const estimationAnchors = destHop ? [...anchors, { ttl: destHop.ttl, pos: destHop.pos }] : anchors;
   const hops = state.hops.map((h): LaidHop => {
     const rttMs = meanRtt(h.probes);
     return {
       ttl: h.ttl,
-      pos: located(h) ? latLonToVec3(h.lat, h.lon) : estimatePosition(h.ttl, anchors, origin),
+      pos: located(h) ? latLonToVec3(h.lat, h.lon) : estimatePosition(h.ttl, estimationAnchors, origin),
       estimated: !located(h),
       timeout: h.probes.every((p) => p.rttMs === null),
       rttMs,
       color: rttMs === null ? NO_RTT_COLOR : rttColor(rttMs),
     };
   });
-  return { generation: state.generation, origin, hops };
+  return { generation: state.generation, origin, hops: destHop ? [...hops, destHop] : hops };
 };

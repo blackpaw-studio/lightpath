@@ -1,0 +1,1 @@
+{"type":"trace.done","reached":false,"reason":"quiet","destination":{"ip":"198.51.100.77","reachable":true,"port":443,"rttMs":18.4,"host":"edge.example.net","asn":64502,"org":"EXAMPLE-CDN","lat":40.71,"lon":-74.0,"city":"New York","geoSource":"api"}}

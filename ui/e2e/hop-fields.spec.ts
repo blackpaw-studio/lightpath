@@ -34,12 +34,13 @@ for (const [name, agent] of CASES) {
       await expect(row.locator(".details")).toBeHidden();
       if (r.kind === "quiet") {
         const n = r.ttls.length;
-        await expect(row.locator(".place")).toHaveText(`${n} ${n === 1 ? "router" : "routers"} stayed quiet`);
+        await expect(row.locator(".place")).toHaveText(r.title ?? `${n} ${n === 1 ? "router" : "routers"} stayed quiet`);
         await expect(row).toContainText("Many networks hide their routers; the path continues.");
         await button.click();
         await expect(row.locator(".details")).toContainText(r.ttls.join(", "));
         continue;
       }
+      if (r.kind !== "hop") throw new Error("fixture ends with an unexpected " + r.kind + " row");
       const h = r.hop;
       await expect(row.locator(".dot")).toHaveClass(h.geoSource === "estimated" ? /hollow/ : /solid/);
       await expect(row.locator(".delay")).toHaveText(delay(h));
@@ -71,7 +72,7 @@ test("real: places, networks and the plain summary line read naturally", async (
   const places = page.locator(".hop .place");
   await expect(places.nth(0)).toHaveText("Your router · Brooklyn");
   await expect(places.nth(1)).toHaveText("Verizon · New York");
-  await expect(places.nth(3)).toHaveText("1 router stayed quiet");
+  await expect(places.nth(3)).toHaveText("1 router inside Verizon's network");
   await expect(places.nth(6)).toHaveText("Cloudflare · South Brisbane");
   await expect(page.locator(".summary")).toHaveText("To 1.1.1.1 · reached"); // an IP target is not repeated in parens
   await expect(page.locator(".stats")).toHaveText("7 hops · 2 networks · 6 ms");

@@ -82,7 +82,7 @@ func TestRunnerPassesNameAndArgvThrough(t *testing.T) {
 func TestRunnerReachedWhenLastHopIsResolvedIP(t *testing.T) {
 	var cmd *fakeCmd
 	evs := run(t, fakeExec(openFixture(t, "macos.reached.txt"), nil, nil, &cmd))
-	if got := last(t, evs); got != (Done{Reached: true}) {
+	if got := last(t, evs); got != (Done{Reached: true, Reason: protocol.EndReached}) {
 		t.Fatalf("last = %#v", got)
 	}
 	if len(evs) != 1+7+1 { // header, 7 hops, done
@@ -97,14 +97,14 @@ func TestRunnerReachedWhenLastHopIsResolvedIP(t *testing.T) {
 
 func TestRunnerReachedComparesAddressesNotStrings(t *testing.T) {
 	out := "traceroute6 to h (2001:DB8::64), 64 hops max\n 1  2001:db8:0::64  1 ms  1 ms  1 ms\n"
-	if got := last(t, run(t, fakeExec(strings.NewReader(out), nil, nil, nil))); got != (Done{Reached: true}) {
+	if got := last(t, run(t, fakeExec(strings.NewReader(out), nil, nil, nil))); got != (Done{Reached: true, Reason: protocol.EndReached}) {
 		t.Fatalf("last = %#v", got)
 	}
 }
 
 func TestRunnerNotReachedWhenLastHopTimesOut(t *testing.T) {
 	evs := run(t, fakeExec(openFixture(t, "linux.timeouts.txt"), nil, nil, nil))
-	if got := last(t, evs); got != (Done{Reached: false}) {
+	if got := last(t, evs); got != (Done{Reached: false, Reason: protocol.EndLimit}) {
 		t.Fatalf("last = %#v", got)
 	}
 }

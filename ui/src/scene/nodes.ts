@@ -40,7 +40,7 @@ interface Entry {
 }
 
 /** 0..1 smooth pseudo-noise from summed incommensurate sines. */
-const shimmer = (t: number, seed: number): number =>
+export const shimmer = (t: number, seed: number): number =>
   0.5 + 0.25 * Math.sin(t * 7.3 + seed * 3.1) + 0.25 * Math.sin(t * 12.9 + seed * 7.7);
 
 const ringGeometry = new RingGeometry(0.88, 1, 64);

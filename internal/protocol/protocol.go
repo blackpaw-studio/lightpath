@@ -19,6 +19,26 @@ const (
 	GeoEstimated GeoSource = "estimated"
 )
 
+// Version is the wire protocol version. It is not sent on the wire; ui/src
+// protocol.ts must carry the same number (checked by a vitest).
+//
+// Changelog:
+//
+//	1: initial protocol
+//	2: trace.done gains optional reason and destination
+const Version = 2
+
+// EndReason says why a trace finished.
+type EndReason string
+
+const (
+	EndReached   EndReason = "reached"   // a hop is the destination
+	EndQuiet     EndReason = "quiet"     // stopped early after a run of silent hops
+	EndLimit     EndReason = "limit"     // max hops, or traceroute exited without reaching
+	EndError     EndReason = "error"     // never sent on the wire; UI-side state
+	EndCancelled EndReason = "cancelled" // never sent on the wire; UI-side state
+)
+
 type ErrorCode string
 
 const (
@@ -93,8 +113,30 @@ type Hop struct {
 // "probes"; "type" and "ttl" are always present. Build with NewHopUpdate.
 type HopUpdate map[string]any
 
+// Destination is the end of the path as the agent knows it: a TCP connect
+// check plus the same enrichment hops get. If Reachable, Port and RTTMs are
+// non-null; otherwise both are null.
+type Destination struct {
+	IP        string    `json:"ip"`
+	Reachable bool      `json:"reachable"`
+	Port      *int      `json:"port"`
+	RTTMs     *float64  `json:"rttMs"`
+	Host      *string   `json:"host"`
+	ASN       *int      `json:"asn"`
+	Org       *string   `json:"org"`
+	Lat       *float64  `json:"lat"`
+	Lon       *float64  `json:"lon"`
+	City      *string   `json:"city"`
+	GeoSource GeoSource `json:"geoSource"`
+}
+
+// TraceDone ends a trace. Reason and Destination are optional (protocol v2):
+// absent for old agents, never null when present. When Reason is set, Reached
+// must equal (Reason == EndReached).
 type TraceDone struct {
-	Reached bool `json:"reached"`
+	Reached     bool         `json:"reached"`
+	Reason      *EndReason   `json:"reason,omitempty" lp:"optional"`
+	Destination *Destination `json:"destination,omitempty" lp:"optional"`
 }
 
 type Error struct {
