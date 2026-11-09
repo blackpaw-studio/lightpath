@@ -24,7 +24,8 @@ const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let send: (msg: ClientMsg) => boolean = () => false;
 const ctl = createController({ send: (msg) => send(msg) });
-ctl.attachHud(mount(need<HTMLElement>("#hud-root"), ctl.handlers, { hosted: !isAgentServed(location) }));
+const hud = mount(need<HTMLElement>("#hud-root"), ctl.handlers, { hosted: !isAgentServed(location) });
+ctl.attachHud(hud);
 const conn = connect({ url: wsUrl(location), onMessage: ctl.onMessage, onState: ctl.onConnState });
 send = conn.send;
 
@@ -39,6 +40,7 @@ const startScene = async (): Promise<void> => {
     width: innerWidth, height: innerHeight, pixelRatio: dpr(),
   });
   ctl.attachScene(view);
+  hud.observeOcclusion(view.setOcclusion); // the globe is framed in what the panels leave free
   const loop = createLoop({
     update: (dt, now) => {
       ctl.frame();

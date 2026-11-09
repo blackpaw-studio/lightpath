@@ -3,7 +3,7 @@
 // No three.js rendering here, so tests can drive it frame by frame.
 import { normalize, scale, type Vec3 } from "../geo";
 import type { TraceState } from "../reducer";
-import { fitDistance, FOV_DEG, springStep, type SpringState } from "./camera";
+import { FOV_DEG, limbDistance, springStep, type SpringState } from "./camera";
 import { ORIGIN_KEY, type PoseMap, type PoseSource } from "./globePoses";
 import { createTunnelPoseSource } from "./poses";
 import {
@@ -120,7 +120,7 @@ export const createTunnelController = (deps: TunnelControllerDeps): TunnelContro
     },
     camera: () => {
       const rigPos = deps.rigPos();
-      const orbitR = fitDistance([Math.PI / 2], deps.aspect(), FOV_DEG);
+      const orbitR = limbDistance(deps.aspect(), FOV_DEG);
       if (!frame) return cameraAt(0, { rigPos, orbitR, ...anchorFrame([0, 0, 1], rigPos), camS: S_HOME });
       const input = { rigPos, orbitR, frame, northUp, camS: cam.x };
       return deps.reducedMotion ? reducedCameraAt(reducedShot(transition), input) : cameraAt(viewTOf(transition), input);

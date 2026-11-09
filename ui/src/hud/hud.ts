@@ -3,6 +3,7 @@ import type { ConnState } from "../conn";
 import type { MaybeShown } from "../plausibility";
 import type { TraceState } from "../reducer";
 import { rowEl, type RowHandlers } from "./hops";
+import type { Rect } from "../scene/safeArea";
 import { installPanel } from "./install";
 import { buildRows, isIpLiteral, summaryLine, trailingStopKey } from "./rows";
 import { sparkline } from "./sparkline";
@@ -27,6 +28,11 @@ export interface Hud {
   setView(view: View): void;
   /** Highlight a hop row (ttl), or clear with null. */
   setFocus(ttl: number | null): void;
+  /**
+   * Reports the viewport-relative rects of the visible panels now and whenever they
+   * change (panel resize, window resize). Returns the unsubscribe.
+   */
+  observeOcclusion(cb: (rects: readonly Rect[]) => void): () => void;
   destroy(): void;
 }
 
@@ -171,6 +177,27 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
     setFocus(ttl) {
       focus = ttl;
       applyFocus();
+    },
+    observeOcclusion(cb) {
+      const panels = [...hud.querySelectorAll<HTMLElement>(".panel")];
+      let last = "";
+      const emit = (): void => {
+        const rects = panels.map((p) => p.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0)
+          .map((r): Rect => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }));
+        const key = JSON.stringify(rects);
+        if (key === last) return;
+        last = key;
+        cb(rects);
+      };
+      const resizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(emit);
+      panels.forEach((p) => resizes?.observe(p));
+      const win = doc.defaultView;
+      win?.addEventListener("resize", emit);
+      emit();
+      return () => {
+        resizes?.disconnect();
+        win?.removeEventListener("resize", emit);
+      };
     },
     destroy() {
       hud.remove();
