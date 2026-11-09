@@ -1,6 +1,6 @@
 # Lightpath — ending the path cleanly and naming quiet hops
 
-Status: draft for Evan's approval. Amends docs/specs/2026-11-07-lightpath.md and 2026-11-08-lightpath-friendlier-ux.md; those govern everything not named here.
+Approved by Evan 2026-11-08. Amends docs/specs/2026-11-07-lightpath.md and 2026-11-08-lightpath-friendlier-ux.md; those govern everything not named here.
 
 ## Problem
 When the destination drops probes (firewalled hosts, many residential IPs), traceroute keeps probing to hop 30 and the list fills with "routers stayed quiet" rows that are not routers at all. Measured 2026-11-08 from Brooklyn: 74.101.2.152 answers neither UDP, ICMP traceroute nor ping; only hops 1–2 respond. Normal targets (google.com, 1.1.1.1) have ≤ 1 silent hop.
