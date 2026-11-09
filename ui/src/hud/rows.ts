@@ -1,11 +1,20 @@
 // Pure view-model helpers for the hop list: formatting, labels and grouping.
-import type { Hop, Probe } from "../protocol";
+import { destinationTtl, sceneDestination } from "../destination";
+import type { Destination, Hop, Probe } from "../protocol";
 import type { TraceState } from "../reducer";
 import { shortNetworkName } from "./network";
 
 export type Row =
   | { readonly kind: "hop"; readonly key: string; readonly hop: Hop }
-  | { readonly kind: "quiet"; readonly key: string; readonly ttls: readonly number[] };
+  /** A run of silent hops. `title` names it by its neighbours (see quietRunTitle); absent means the generic copy. */
+  | { readonly kind: "quiet"; readonly key: string; readonly ttls: readonly number[]; readonly title?: string }
+  /** The end of a quiet finish whose destination answers over TCP. `ttl` is its scene entry, null when the scene draws none. */
+  | { readonly kind: "destination"; readonly key: string; readonly destination: Destination; readonly ttl: number | null }
+  /** The end of a quiet finish whose destination does not answer: the trailing silent hops, closed off. */
+  | {
+      readonly kind: "end"; readonly key: string; readonly ttls: readonly number[]; readonly pastLabel: string | null;
+      readonly destination: Destination | null;
+    };
 
 /** Median of the replies that arrived; null when none did. */
 export const medianRtt = (probes: readonly Probe[]): number | null => {
@@ -67,9 +76,11 @@ export const placeLabel = (hop: Hop): string => {
   return parts.length > 0 ? parts.join(" · ") : (hop.ip ?? "Unknown");
 };
 
+type MeasuredRow = Extract<Row, { kind: "hop" | "quiet" }>;
+
 /** Collapses each run of consecutive non-responding hops into one quiet row. Keys: h<ttl> / q<firstTtl>. */
-export const groupHops = (hops: readonly Hop[]): readonly Row[] =>
-  hops.reduce<readonly Row[]>((rows, hop) => {
+export const groupHops = (hops: readonly Hop[]): readonly MeasuredRow[] =>
+  hops.reduce<readonly MeasuredRow[]>((rows, hop) => {
     if (!isQuiet(hop)) return [...rows, { kind: "hop", key: "h" + hop.ttl, hop }];
     const last = rows.at(-1);
     if (last?.kind === "quiet" && last.ttls.at(-1) === hop.ttl - 1) {
@@ -80,18 +91,74 @@ export const groupHops = (hops: readonly Hop[]): readonly Row[] =>
 
 const plural = (n: number, one: string, many: string): string => n + " " + (n === 1 ? one : many);
 
-/** Key of the quiet run that ends a finished trace which never reached its destination, else null. */
-export const trailingStopKey = (state: TraceState, rows: readonly Row[]): string | null => {
-  const last = rows.at(-1);
-  return state.status === "done" && state.reached === false && last?.kind === "quiet" ? last.key : null;
+const possessive = (name: string): string => name + (name.endsWith("s") ? "'" : "'s");
+
+/** Names a quiet run by the networks on either side; the generic copy when either side is unknown. */
+export const quietRunTitle = (n: number, before: Hop | null, after: Hop | null): string => {
+  const a = before === null ? null : shortNetworkName(before.org, before.asn);
+  const b = after === null ? null : shortNetworkName(after.org, after.asn);
+  const routers = plural(n, "router", "routers");
+  if (a === null || b === null) return routers + " stayed quiet";
+  return a === b ? routers + " inside " + possessive(a) + " network" : routers + " between " + a + " and " + b;
 };
 
-/** "N hops · M networks · X ms" (unknown parts omitted). An unreached trace stops counting at its last reply and has no final delay. */
+const lastResponding = (hops: readonly Hop[]): Hop | null => hops.filter((h) => !isQuiet(h)).at(-1) ?? null;
+
+/** Gives each quiet row between two responding hops its neighbour-based title. */
+const nameGaps = (rows: readonly MeasuredRow[]): readonly MeasuredRow[] =>
+  rows.map((row, i) => {
+    if (row.kind !== "quiet") return row;
+    const before = rows[i - 1];
+    const after = rows[i + 1];
+    return {
+      ...row,
+      title: quietRunTitle(
+        row.ttls.length, before?.kind === "hop" ? before.hop : null, after?.kind === "hop" ? after.hop : null,
+      ),
+    };
+  });
+
+/**
+ * The hop list's rows: hops, named quiet gaps and, for a trace that stopped early, an
+ * honest ending in place of the trailing silent hops (the destination, or a closing row).
+ */
+export const buildRows = (state: TraceState): readonly Row[] => {
+  const rows = nameGaps(groupHops(state.hops));
+  if (state.status !== "done" || state.endReason !== "quiet") return rows;
+  const trailing = rows.at(-1);
+  const body = trailing?.kind === "quiet" ? rows.slice(0, -1) : rows;
+  const dest = state.destination;
+  if (dest?.reachable) {
+    const ttl = sceneDestination(state) === null ? null : destinationTtl(state.hops);
+    return [...body, { kind: "destination", key: "dest", destination: dest, ttl }];
+  }
+  const past = lastResponding(state.hops);
+  return [
+    ...body,
+    {
+      kind: "end", key: "end", ttls: trailing?.kind === "quiet" ? trailing.ttls : [],
+      pastLabel: past === null ? null : placeLabel(past), destination: dest,
+    },
+  ];
+};
+
+/** Key of the quiet run that ends a trace which ran out of hops without reaching its destination, else null. */
+export const trailingStopKey = (state: TraceState, rows: readonly Row[]): string | null => {
+  const last = rows.at(-1);
+  return state.status === "done" && state.endReason === "limit" && last?.kind === "quiet" ? last.key : null;
+};
+
+/**
+ * "N hops · M networks · X ms" (unknown parts omitted). An unreached trace stops counting at its
+ * last reply and has no final delay. A quiet finish whose destination answers reads "N+ hops":
+ * hops through the last reply, plus the destination beyond.
+ */
 export const summaryLine = (state: TraceState): string => {
   const responding = state.hops.filter((h) => !isQuiet(h));
   const last = responding.at(-1);
   const reached = state.reached === true;
   const hopCount = reached || !last ? state.hops.length : state.hops.indexOf(last) + 1;
+  const beyond = state.endReason === "quiet" && state.destination?.reachable === true && last !== undefined;
   // Distinct networks by display name (AS7922 and AS33651 are both Comcast); unnamed ones by AS number.
   const networks = new Set(
     responding
@@ -103,7 +170,7 @@ export const summaryLine = (state: TraceState): string => {
   );
   const delay = reached && last ? medianRtt(last.probes) : null;
   return [
-    plural(hopCount, "hop", "hops"),
+    beyond ? hopCount + 1 + "+ hops" : plural(hopCount, "hop", "hops"),
     ...(networks.size > 0 ? [plural(networks.size, "network", "networks")] : []),
     ...(delay !== null ? [delayText(delay)] : []),
   ].join(" · ");

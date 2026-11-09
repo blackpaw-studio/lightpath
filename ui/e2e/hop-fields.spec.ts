@@ -34,12 +34,13 @@ for (const [name, agent] of CASES) {
       await expect(row.locator(".details")).toBeHidden();
       if (r.kind === "quiet") {
         const n = r.ttls.length;
-        await expect(row.locator(".place")).toHaveText(`${n} ${n === 1 ? "router" : "routers"} stayed quiet`);
+        await expect(row.locator(".place")).toHaveText(r.title ?? `${n} ${n === 1 ? "router" : "routers"} stayed quiet`);
         await expect(row).toContainText("Many networks hide their routers; the path continues.");
         await button.click();
         await expect(row.locator(".details")).toContainText(r.ttls.join(", "));
         continue;
       }
+      if (r.kind !== "hop") throw new Error("fixture ends with an unexpected " + r.kind + " row");
       const h = r.hop;
       await expect(row.locator(".dot")).toHaveClass(h.geoSource === "estimated" ? /hollow/ : /solid/);
       await expect(row.locator(".delay")).toHaveText(delay(h));

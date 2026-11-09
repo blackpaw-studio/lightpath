@@ -115,7 +115,7 @@
 .hop.quiet.focus { background: rgba(255, 255, 255, 0.05); }
 .connector { flex: none; width: 9px; align-self: stretch; display: flex; justify-content: center; }
 .connector::before { content: ""; border-left: 2px dashed var(--dim); opacity: 0.6; }
-.quiet-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.quiet-text, .dest-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .quiet .place { flex: none; font-size: 13px; color: var(--dim); }
 .subtitle { font-size: 11.5px; line-height: 1.4; color: var(--dim); opacity: 0.8; }
 .stats { margin: 4px 0 0; font-size: 13px; color: var(--text); font-weight: 500; }
