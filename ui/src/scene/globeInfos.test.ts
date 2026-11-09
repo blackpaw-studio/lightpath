@@ -36,3 +36,29 @@ describe("destination on the globe", () => {
     expect(nodeInfos(s, l).has(4)).toBe(false);
   });
 });
+
+describe("arc spans over runs of estimated hops", () => {
+  const located = (ttl: number): Hop => ({ ...hop(ttl, false), lat: 10 * ttl, lon: 5 * ttl });
+  const stateOf = (hops: Hop[], destination: Destination | null = null, over: Partial<TraceState> = {}): TraceState =>
+    ({ ...initialState, status: "done", origin, hops, reached: true, endReason: "reached", destination, ...over });
+  const spans = (s: TraceState) => arcInfos(globeLayout(s)).map((a) => a.span ?? null);
+
+  it("gives every arc through a run between two located hops that run's span, as fractions of its ttls", () => {
+    const sp = spans(stateOf([located(1), hop(2, true), hop(3, true), located(4)]));
+    expect(sp[0]).toBeNull();
+    expect(sp[1]).toEqual({ from: 1, to: 4, t0: 0, t1: 1 / 3 });
+    expect(sp[2]).toEqual({ from: 1, to: 4, t0: 1 / 3, t1: 2 / 3 });
+    expect(sp[3]).toEqual({ from: 1, to: 4, t0: 2 / 3, t1: 1 });
+  });
+
+  it("uses the located destination as the run's far anchor", () => {
+    const s = stateOf([located(1), hop(2, true), hop(3, true)], dest, { reached: false, endReason: "quiet" });
+    const sp = spans(s);
+    expect(sp[3]).toEqual({ from: 1, to: 4, t0: 2 / 3, t1: 1 });
+  });
+
+  it("leaves a run with no anchor on either side as plain arcs", () => {
+    expect(spans(stateOf([hop(1, true), hop(2, true), located(3)])).every((x) => x === null)).toBe(true);
+    expect(spans(stateOf([located(1), hop(2, true), hop(3, true)], null, { status: "running", endReason: null, reached: null })).every((x) => x === null)).toBe(true);
+  });
+});

@@ -6,7 +6,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { Vec3 } from "../geo";
-import { writeArcPoints } from "./arcGeometry";
+import { writeArcPoints, type ArcSpan } from "./arcGeometry";
 import type { PoseMap } from "./globePoses";
 import { glowTexture } from "./glow";
 import { PULSE_MS, pulseHead, pulseIntensity } from "./pulse";
@@ -19,6 +19,16 @@ export interface ArcInfo {
   readonly colorTo: string;
   /** Either end is estimated → dashed. */
   readonly estimated: boolean;
+  /** Set when this arc is a piece of a run of estimated hops between two located anchors (see arcInfos). */
+  readonly span?: ArcRun;
+}
+
+/** The run an arc belongs to: its anchors' pose keys, and the arc's extent as fractions of the run's ttls. */
+export interface ArcRun {
+  readonly from: number;
+  readonly to: number;
+  readonly t0: number;
+  readonly t1: number;
 }
 
 export interface Arcs {
@@ -94,6 +104,13 @@ const angleBetween = (a: Vec3, b: Vec3): number => {
   return Math.atan2(Math.hypot(cx, cy, cz), a[0] * b[0] + a[1] * b[1] + a[2] * b[2]);
 };
 
+/** The run's full angle comes from its anchors' poses this frame, so a glide keeps the hump continuous. */
+const spanOf = (run: ArcRun | undefined, poses: PoseMap): ArcSpan | undefined => {
+  const a = run && poses.get(run.from);
+  const b = run && poses.get(run.to);
+  return run && a && b ? { t0: run.t0, t1: run.t1, theta: angleBetween(a.pos, b.pos) } : undefined;
+};
+
 export const createArcs = (parent: Object3D, texture: () => Texture = glowTexture): Arcs => {
   const entries = new Map<string, Entry>();
   // Scratch shared by every arc (fill runs synchronously, one arc at a time).
@@ -115,7 +132,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
     entries.delete(k);
   };
 
-  const fill = (e: Entry, a: Vec3, b: Vec3, info: ArcInfo, nowMs: number, reducedMotion: boolean, alpha: number): void => {
+  const fill = (e: Entry, a: Vec3, b: Vec3, info: ArcInfo, poses: PoseMap, nowMs: number, reducedMotion: boolean, alpha: number): void => {
     const key = info.colorFrom + info.colorTo;
     if (key !== e.colorKey) {
       e.colorFrom.set(info.colorFrom);
@@ -126,7 +143,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
     const age = nowMs - e.bornAt;
     const opts = { reducedMotion, estimated: info.estimated, seed: e.seed };
     const gain = alpha * ARC_GAIN;
-    writeArcPoints(pts, a, b, SEGMENTS);
+    writeArcPoints(pts, a, b, SEGMENTS, undefined, spanOf(info.span, poses));
     // Per-vertex colour = endpoint gradient × pulse brightness, computed once per vertex.
     for (let v = 0; v <= SEGMENTS; v++) {
       const u = v / SEGMENTS;
@@ -191,7 +208,7 @@ export const createArcs = (parent: Object3D, texture: () => Texture = glowTextur
           e.head.visible = false;
           continue;
         }
-        fill(e, a.pos, b.pos, info, nowMs, reducedMotion, Math.min(a.opacity, b.opacity) * globalOpacity);
+        fill(e, a.pos, b.pos, info, poses, nowMs, reducedMotion, Math.min(a.opacity, b.opacity) * globalOpacity);
       }
     },
     setResolution: (w, h, dpr) => {

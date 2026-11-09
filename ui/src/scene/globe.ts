@@ -13,10 +13,10 @@ import { applyFraming, createCameraRig, type CameraRig } from "./camera";
 import { sceneDestination } from "../destination";
 import type { BloomTier } from "./frameBudget";
 import { createGlobePoseSource, ORIGIN_KEY, rotateY, type PoseMap, type PoseSource } from "./globePoses";
-import { createArcs, type ArcInfo } from "./arcs";
+import { createArcs, type ArcInfo, type ArcRun } from "./arcs";
 import { createLandDots } from "./landdots";
 import type { DrawnMark } from "./marks";
-import { globeLayout, type GlobeLayout } from "./layout";
+import { globeLayout, type GlobeLayout, type LaidHop } from "./layout";
 import { createNodes, type NodeInfo } from "./nodes";
 import { createStars } from "./stars";
 
@@ -86,17 +86,46 @@ export const nodeInfos = (state: TraceState, layout: GlobeLayout): Map<number, N
   ]);
 };
 
-export const arcInfos = (layout: GlobeLayout): ArcInfo[] =>
-  layout.hops.map((h, i) => {
+/**
+ * For each layout hop index, the run its arc belongs to: a maximal run of
+ * interpolated hops with a located hop on each side, which estimatePosition puts
+ * on one great circle at their ttl fractions. Runs without both anchors (their
+ * hops pile onto one point) have no entry.
+ */
+const runSpans = (hops: readonly LaidHop[]): ReadonlyMap<number, ArcRun> => {
+  const spans = new Map<number, ArcRun>();
+  for (let i = 0; i < hops.length;) {
+    if (hops[i]!.located) { i++; continue; }
+    let j = i;
+    while (j + 1 < hops.length && !hops[j + 1]!.located) j++;
+    const from = hops[i - 1];
+    const to = hops[j + 1];
+    if (from && to) {
+      const length = to.ttl - from.ttl;
+      for (let k = i; k <= j + 1; k++) {
+        spans.set(k, { from: from.ttl, to: to.ttl, t0: (hops[k - 1]!.ttl - from.ttl) / length, t1: (hops[k]!.ttl - from.ttl) / length });
+      }
+    }
+    i = j + 1;
+  }
+  return spans;
+};
+
+export const arcInfos = (layout: GlobeLayout): ArcInfo[] => {
+  const spans = runSpans(layout.hops);
+  return layout.hops.map((h, i) => {
     const prev = layout.hops[i - 1];
+    const span = spans.get(i);
     return {
       from: prev?.ttl ?? ORIGIN_KEY,
       to: h.ttl,
       colorFrom: prev?.color ?? ORIGIN_ARC_COLOR,
       colorTo: h.color,
       estimated: h.estimated || (prev?.estimated ?? false),
+      ...(span ? { span } : {}),
     };
   });
+};
 
 const framingKey = (layout: GlobeLayout): string => {
   const last = layout.hops[layout.hops.length - 1];

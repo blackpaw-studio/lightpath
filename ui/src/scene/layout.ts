@@ -11,6 +11,8 @@ export interface LaidHop {
   readonly pos: Vec3;
   /** No geo from the agent; position interpolated by the UI. */
   readonly estimated: boolean;
+  /** Placed from a location (a located hop, or the destination), so later estimates are anchored to it. */
+  readonly located: boolean;
   /** Every probe timed out. */
   readonly timeout: boolean;
   readonly rttMs: number | null;
@@ -41,7 +43,7 @@ export const globeLayout = (state: TraceState, fallbackOrigin: Vec3 | null = nul
   // trailing silent hops spread along the great circle toward it instead of piling up.
   const dest = sceneDestination(state);
   const destHop: LaidHop | null = dest && dest.lat !== null && dest.lon !== null ? {
-    ttl: destinationTtl(state.hops), pos: latLonToVec3(dest.lat, dest.lon), estimated: true, timeout: false,
+    ttl: destinationTtl(state.hops), pos: latLonToVec3(dest.lat, dest.lon), estimated: true, located: true, timeout: false,
     rttMs: dest.rttMs, color: dest.rttMs === null ? NO_RTT_COLOR : rttColor(dest.rttMs),
   } : null;
   const estimationAnchors = destHop ? [...anchors, { ttl: destHop.ttl, pos: destHop.pos }] : anchors;
@@ -51,6 +53,7 @@ export const globeLayout = (state: TraceState, fallbackOrigin: Vec3 | null = nul
       ttl: h.ttl,
       pos: located(h) ? latLonToVec3(h.lat, h.lon) : estimatePosition(h.ttl, estimationAnchors, origin),
       estimated: !located(h),
+      located: located(h),
       timeout: h.probes.every((p) => p.rttMs === null),
       rttMs,
       color: rttMs === null ? NO_RTT_COLOR : rttColor(rttMs),

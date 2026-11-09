@@ -5,7 +5,21 @@ import { DEFAULT_ARC_K, type Vec3 } from "../geo";
 
 const EPS = 1e-9;
 
-export const writeArcPoints = (out: Float32Array, a: Vec3, b: Vec3, n: number, k: number = DEFAULT_ARC_K): void => {
+/**
+ * This arc is a piece of a longer run of hops on one great circle: its altitude
+ * follows the run's single hump (sin over [t0, t1] of the run) instead of a hump
+ * of its own, so chained arcs read as one smooth curve. `theta` is the run's
+ * full angular length.
+ */
+export interface ArcSpan {
+  readonly t0: number;
+  readonly t1: number;
+  readonly theta: number;
+}
+
+export const writeArcPoints = (
+  out: Float32Array, a: Vec3, b: Vec3, n: number, k: number = DEFAULT_ARC_K, span?: ArcSpan,
+): void => {
   const ra = Math.hypot(a[0], a[1], a[2]);
   const rb = Math.hypot(b[0], b[1], b[2]);
   const ax = a[0] / ra, ay = a[1] / ra, az = a[2] / ra;
@@ -13,7 +27,7 @@ export const writeArcPoints = (out: Float32Array, a: Vec3, b: Vec3, n: number, k
   const d = ax * bx + ay * by + az * bz;
   const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
   const theta = Math.atan2(Math.hypot(cx, cy, cz), d);
-  const h = k * theta;
+  const h = k * (span ? span.theta : theta);
 
   // Direction in the great-circle plane orthogonal to a; antipodal → fixed perpendicular (as geo.ts).
   let ux: number, uy: number, uz: number;
@@ -29,7 +43,8 @@ export const writeArcPoints = (out: Float32Array, a: Vec3, b: Vec3, n: number, k
 
   for (let i = 0; i <= n; i++) {
     const t = i / n;
-    const r = (ra + (rb - ra) * t) * (1 + h * Math.sin(Math.PI * t));
+    const s = span ? span.t0 + t * (span.t1 - span.t0) : t;
+    const r = (ra + (rb - ra) * t) * (1 + h * Math.sin(Math.PI * s));
     let x: number, y: number, z: number;
     if (i === 0 || theta < EPS) {
       x = ax; y = ay; z = az;

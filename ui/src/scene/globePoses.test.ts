@@ -8,7 +8,7 @@ import {
 const layout = (hops: [number, Vec3][], generation = 1): GlobeLayout => ({
   generation,
   origin: latLonToVec3(0, 0),
-  hops: hops.map(([ttl, pos]) => ({ ttl, pos, estimated: false, timeout: false, rttMs: 5, color: "#22e6ff" })),
+  hops: hops.map(([ttl, pos]) => ({ ttl, pos, located: true, estimated: false, timeout: false, rttMs: 5, color: "#22e6ff" })),
 });
 const input = (l: GlobeLayout, nowMs: number, dtMs = 16, extra: Partial<PoseInput> = {}): PoseInput =>
   ({ layout: l, nowMs, dtMs, reducedMotion: false, rotationY: 0, ...extra });
