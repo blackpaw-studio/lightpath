@@ -157,14 +157,20 @@ export const traceOptions = (maxJumpWorld?: number): TraceOptions =>
 export const ARC_MAX_JUMP_WORLD = STREAM_MAX_JUMP_WORLD * 1.8;
 
 /** The arc-shape check: world continuity of each arc's highest point (the a:<ttl> entities). */
-export const expectArcsSmooth = (frames: readonly Frame[]): void => {
-  const arcs = frames.map((f) => ({ ...f, entities: Object.fromEntries(Object.entries(f.entities).filter(([k]) => /(^|:)a:\d+$/.test(k))) }));
+export const expectArcsSmooth = (frames: readonly Frame[], maxJumpWorld: number = ARC_MAX_JUMP_WORLD): void => {
+  const arcs = frames.map((f) => ({ ...f, entities: Object.fromEntries(Object.entries(f.entities).filter(([k]) => isArcId(k))) }));
   expect(arcs.some((f) => Object.keys(f.entities).length > 0), "the trace records arc entities").toBe(true);
-  expectSmooth(arcs, { maxJumpPx: Infinity, flickerWindowMs: 0, maxJumpWorld: ARC_MAX_JUMP_WORLD });
+  assertNoViolations(arcs, { maxJumpPx: Infinity, flickerWindowMs: 0, maxJumpWorld });
 };
 
+const isArcId = (id: string): boolean => /(^|:)a:\d+$/.test(id);
+
+/** Asserts checkTrace finds no violations on the nodes, gates and labels (arc shapes have their own bound). */
+export const expectSmooth = (frames: readonly Frame[], opts: TraceOptions): void =>
+  assertNoViolations(frames.map((f) => ({ ...f, entities: Object.fromEntries(Object.entries(f.entities).filter(([k]) => !isArcId(k))) })), opts);
+
 /** Asserts checkTrace finds no violations, printing the first few and saving the frames on failure. */
-export const expectSmooth = (frames: readonly Frame[], opts: TraceOptions): void => {
+const assertNoViolations = (frames: readonly Frame[], opts: TraceOptions): void => {
   const violations: Violation[] = checkTrace(frames, opts);
   if (violations.length > 0) {
     // Kept beside the failure for offline inspection.

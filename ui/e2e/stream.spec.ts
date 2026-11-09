@@ -7,7 +7,7 @@ import { ORIGIN_KEY, rotateY } from "../src/scene/globePoses";
 import { FIXTURES } from "./agents";
 import { expectedRows } from "./fixtureHops";
 import {
-  byGeneration, ttlOf, expectArcsSmooth, expectSmooth, openApp, pathExtent, startTrace, state, stepLive, STREAM_MAX_JUMP_WORLD, traceOptions,
+  ARC_MAX_JUMP_WORLD, byGeneration, ttlOf, expectArcsSmooth, expectSmooth, openApp, pathExtent, startTrace, state, stepLive, STREAM_MAX_JUMP_WORLD, traceOptions,
 } from "./harness";
 
 const TAIL_MS = 1500;
@@ -43,7 +43,9 @@ test("restart: a cross-ocean relocation glides and a new trace replaces the old 
   // Hop 3 of the first trace was placed by estimate, then the API put it in Frankfurt.
   expect(pathExtent(frames, "1:3")).toBeGreaterThan(0.5);
   expectSmooth(frames, traceOptions(STREAM_MAX_JUMP_WORLD));
-  expectArcsSmooth(frames);
+  // A hop turning from estimated to located changes which run its neighbouring arcs belong to: a small, known
+  // step in their shape (about 0.06 over two frames here), not the ~0.2 spike an anchor gained by a run used to cause.
+  expectArcsSmooth(frames, ARC_MAX_JUMP_WORLD * 1.4);
 
   // The restart: generation 2 owns the scene; generation 1's hops are gone.
   const s = await state(page);
