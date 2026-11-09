@@ -4,8 +4,9 @@ import { writeFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { checkTrace, type Frame, type TraceOptions, type Violation } from "../src/invariants";
 import type { TraceState } from "../src/reducer";
-import { GLIDE_MAX_RAD_PER_S, ORIGIN_KEY } from "../src/scene/globePoses";
+import { APPEAR_MS, GLIDE_MAX_RAD_PER_S, ORIGIN_KEY } from "../src/scene/globePoses";
 import { FLICKER_WINDOW_MS, MAX_JUMP_PX } from "../src/scene/motionBudget";
+import type { Rect } from "../src/scene/safeArea";
 import type { TestHooks, TraceFrame } from "../src/testhooks";
 import { agentUrl, type Agent } from "./agents";
 
@@ -20,9 +21,10 @@ export const FRAME_MS = 1000 / 60;
 export const screenshotsEnabled =
   !process.env.PW_TEST_CONNECT_WS_ENDPOINT && !process.env.CI && process.platform === "darwin";
 
-/** A recorded frame plus the trace generation it belongs to. */
+/** A recorded frame plus the trace generation it belongs to and the HUD panels' rects at that frame. */
 export interface GenFrame extends TraceFrame {
   readonly gen: number;
+  readonly panels: readonly Rect[];
 }
 
 type HookWindow = Window & { __lightpath: Required<TestHooks> };
@@ -68,10 +70,12 @@ export const step = (page: Page, ms: number, record = false): Promise<GenFrame[]
   page.evaluate(({ ms, dt, record }) => {
     const hooks = (window as unknown as HookWindow).__lightpath;
     const frames: GenFrame[] = [];
+    const panels = (): Rect[] => [...document.querySelectorAll(".hud .panel")].map((p) => p.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0).map((r) => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }));
     const n = Math.round(ms / dt);
     for (let i = 0; i < n; i++) {
       hooks.step(dt, i === n - 1);
-      if (record) frames.push({ ...hooks.trace(), gen: hooks.state().generation });
+      if (record) frames.push({ ...hooks.trace(), gen: hooks.state().generation, panels: panels() });
     }
     return frames;
   }, { ms, dt: FRAME_MS, record });
@@ -87,6 +91,8 @@ export const stepLive = (page: Page, tailMs: number, maxMs = 30_000): Promise<Ge
   page.evaluate(async ({ dt, tailMs, maxMs }) => {
     const hooks = (window as unknown as HookWindow).__lightpath;
     const frames: GenFrame[] = [];
+    const panels = (): Rect[] => [...document.querySelectorAll(".hud .panel")].map((p) => p.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0).map((r) => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }));
     const channel = new MessageChannel();
     const yieldTask = (): Promise<unknown> => new Promise((r) => {
       channel.port1.onmessage = r;
@@ -97,7 +103,7 @@ export const stepLive = (page: Page, tailMs: number, maxMs = 30_000): Promise<Ge
     while (performance.now() - t0 < maxMs) {
       hooks.step(dt, false);
       const s = hooks.state();
-      frames.push({ ...hooks.trace(), gen: s.generation });
+      frames.push({ ...hooks.trace(), gen: s.generation, panels: panels() });
       if (s.status === "done" && doneAt === null) doneAt = performance.now();
       if (doneAt !== null && performance.now() - doneAt >= tailMs) break;
       const due = t0 + frames.length * dt;
@@ -153,6 +159,47 @@ export const expectSmooth = (frames: readonly Frame[], opts: TraceOptions): void
   }
   const report = violations.slice(0, 12).map((v) => `${v.kind} ${v.id} @${v.frame}: ${v.detail}`).join("\n");
   expect(violations, `${violations.length} motion violations over ${frames.length} frames\n${report}`).toEqual([]);
+};
+
+/**
+ * No drawn node (pose entities, the origin included) sits behind a HUD panel. A node
+ * gets one APPEAR_MS after it first shows for the camera's zoom-out to catch up with it.
+ */
+export const expectClearOfPanels = (frames: readonly GenFrame[], graceMs = APPEAR_MS): void => {
+  const firstSeen = new Map<string, number>();
+  const hidden: string[] = [];
+  for (const f of frames) {
+    for (const [id, e] of Object.entries(f.entities)) {
+      if (!/^\d+$/.test(id) || !e.visible) continue;
+      const key = f.gen + ":" + id;
+      if (!firstSeen.has(key)) firstSeen.set(key, f.tMs);
+      if (f.tMs - firstSeen.get(key)! < graceMs) continue;
+      if (f.panels.some((p) => e.x > p.left && e.x < p.right && e.y > p.top && e.y < p.bottom)) {
+        hidden.push(key + " at (" + e.x.toFixed(0) + ", " + e.y.toFixed(0) + ") @" + f.tMs.toFixed(0) + "ms");
+      }
+    }
+  }
+  expect(hidden.slice(0, 12), hidden.length + " node-frames behind a panel").toEqual([]);
+};
+
+/**
+ * After a trace: every pose entity faces the camera (its world point is on the visible
+ * hemisphere) and is drawn inside the viewport and clear of the panels.
+ */
+export const expectFacingAndSafe = async (page: Page, frame: GenFrame): Promise<void> => {
+  const cam = await page.evaluate(() => (window as unknown as HookWindow).__lightpath.cameraPosition());
+  const view = page.viewportSize()!;
+  for (const id of poseIds(frame)) {
+    const e = frame.entities[id]!;
+    const facing = e.world[0] * cam[0] + e.world[1] * cam[1] + e.world[2] * cam[2];
+    expect(facing, "node " + id + " faces the camera").toBeGreaterThan(1);
+    expect(e.x, "node " + id + " x in view").toBeGreaterThan(0);
+    expect(e.x, "node " + id + " x in view").toBeLessThan(view.width);
+    expect(e.y, "node " + id + " y in view").toBeGreaterThan(0);
+    expect(e.y, "node " + id + " y in view").toBeLessThan(view.height);
+    const hit = frame.panels.find((p) => e.x > p.left && e.x < p.right && e.y > p.top && e.y < p.bottom);
+    expect(hit, "node " + id + " at (" + e.x.toFixed(0) + ", " + e.y.toFixed(0) + ") behind a panel").toBeUndefined();
+  }
 };
 
 /** Pixel comparison against the local darwin baseline; a recorded no-op elsewhere. */

@@ -55,6 +55,7 @@ const startScene = async (): Promise<void> => {
     // The controller re-syncs the HUD toggle on the next frame.
     dive: view.dive, surface: view.surface,
     focusHop: view.focusHop, mode: view.mode, viewT: view.viewT,
+    cameraPosition: () => view.globe.rig.camera.position.toArray() as [number, number, number],
   });
 };
 

@@ -1,6 +1,7 @@
-// A trace that stops early ends honestly: a firewalled destination closes the
-// list; one that answers over TCP gets a destination row, an estimated arc and
-// an estimated last gate. Quiet gaps are named by their neighbours.
+// A trace that stops early ends honestly: a destination that answers over TCP, or at
+// least has an IP location, gets a destination row, an estimated arc and an estimated
+// last gate (a firewalled one is marked as not answering); one with no location closes
+// the list. Quiet gaps are named by their neighbours.
 import { expect, test } from "@playwright/test";
 import { FIXTURES } from "./agents";
 import {
@@ -12,23 +13,41 @@ const SETTLE_MS = 6000;
 const DESTINATION_TTL = 14; // quiet-reachable: hops 1–13, so the destination sits one past
 const TAIL_MS = 4000; // long enough for the trailing quiet hops to finish gliding toward the destination
 
-test("firewalled: the list closes with the honest ending and the scene has no destination", async ({ page }) => {
+test("firewalled: a located destination ends the list, estimated, with an arc and a gate in the scene", async ({ page }) => {
   await openApp(page, FIXTURES.firewalled);
   await startTrace(page, "74.101.2.152");
   await waitForDone(page);
   const frames = await step(page, SETTLE_MS, true);
 
   await expect(page.locator(".summary")).toHaveText("To 74.101.2.152 · not reached");
+  await expect(page.locator(".stats")).toHaveText("3+ hops · 1 network");
+  const rows = page.locator(".hops .hop");
+  await expect(rows).toHaveCount(3); // router, Verizon, destination
+  await expect(rows.nth(2).locator(".place")).toHaveText("Destination · Comcast · ≈ Chicago");
+  await expect(rows.nth(2).locator(".subtitle")).toHaveText("Doesn't answer traces; the last stretch is estimated from its IP location.");
+  await rows.nth(2).getByRole("button").click();
+  await expect(rows.nth(2).locator(".details")).not.toContainText("TCP port");
+  await expect(page.getByText("stayed quiet")).toHaveCount(0);
+
+  const s = await state(page);
+  expect(s).toMatchObject({ status: "done", endReason: "quiet", reached: false });
+  // Hops 1–7 are drawn (the quiet ones estimated) and the destination one past them.
+  const last = frames[frames.length - 1]!;
+  expect(poseIds(last)).toEqual(["0", "1", "2", "3", "4", "5", "6", "7", "8"]);
+  expect(last.entities["g:8"]?.visible).toBe(true);
+});
+
+test("firewalled without a location: the list closes with the honest ending and the scene has no destination", async ({ page }) => {
+  await openApp(page, FIXTURES.unlocated);
+  await startTrace(page, "74.101.2.152");
+  await waitForDone(page);
+  const frames = await step(page, SETTLE_MS, true);
+
   await expect(page.locator(".stats")).toHaveText("2 hops · 1 network");
   const rows = page.locator(".hops .hop");
   await expect(rows).toHaveCount(3); // router, Verizon, closing row
   await expect(rows.nth(2).locator(".place")).toHaveText("The destination doesn't answer traces");
   await expect(rows.nth(2).locator(".subtitle")).toHaveText("The path ends somewhere past Verizon · New York.");
-  await expect(page.getByText("stayed quiet")).toHaveCount(0);
-
-  const s = await state(page);
-  expect(s).toMatchObject({ status: "done", endReason: "quiet", reached: false });
-  // Hops 1–7 are drawn (the quiet ones estimated); nothing past them.
   expect(poseIds(frames[frames.length - 1]!)).toEqual(["0", "1", "2", "3", "4", "5", "6", "7"]);
 });
 
@@ -48,7 +67,7 @@ test("reachable: a named gap, a destination row, and an estimated arc and gate",
     "3 routers inside Verizon's network",
     "Verizon · Newark",
     "Cloudflare · Newark",
-    "Destination · Cloudflare · San Francisco · 9 ms",
+    "Destination · Cloudflare · San Francisco · 62 ms",
   ]);
   await expectShot(page, "globe-quiet-done-1280.png"); // before any row is expanded
   const dest = page.locator(".hop.destination");

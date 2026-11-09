@@ -118,7 +118,7 @@ export const hopRowEl = (doc: Document, row: HopRow, expanded: boolean, h: RowHa
     ["Host", hop.host],
     ["Network", asnText(hop)],
     ["Replies", rttText(hop.probes)],
-    ["Location", row.doubt ? doubtText(row.doubt) : SOURCE_TEXT[hop.geoSource]],
+    ["Location", row.doubt ? "Estimated. " + doubtText(row.doubt) : SOURCE_TEXT[hop.geoSource]],
   ]);
   const li = assemble(
     doc, row.key, "hop",
