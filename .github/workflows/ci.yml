@@ -40,7 +40,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sh install_test.sh
-      - run: shellcheck install_test.sh ui/public/install.sh
+      - run: sh run_test.sh
+      - run: shellcheck install_test.sh run_test.sh ui/public/install.sh ui/public/run.sh
   e2e:
     # Playwright specs land with M3. --pass-with-no-tests keeps this job green
     # while ui/e2e has no specs; remove the flag once specs exist.

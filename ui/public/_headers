@@ -11,3 +11,10 @@
 /install.sh
   Cache-Control: public, max-age=300
   Content-Type: text/plain; charset=utf-8
+# /run is a 200 rewrite of /run.sh (see _redirects); cover both paths.
+/run
+  Cache-Control: public, max-age=300
+  Content-Type: text/plain; charset=utf-8
+/run.sh
+  Cache-Control: public, max-age=300
+  Content-Type: text/plain; charset=utf-8

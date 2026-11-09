@@ -1,0 +1,2 @@
+# curl -fsSL https://lightpath.blackpaw.studio/run | sh
+/run /run.sh 200
