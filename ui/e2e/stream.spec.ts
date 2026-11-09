@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import { latLonToVec3, type Vec3 } from "../src/geo";
 import { ORIGIN_KEY, rotateY } from "../src/scene/globePoses";
 import { FIXTURES } from "./agents";
+import { expectedRows } from "./fixtureHops";
 import {
   byGeneration, ttlOf, expectSmooth, openApp, pathExtent, startTrace, state, stepLive, STREAM_MAX_JUMP_WORLD, traceOptions,
 } from "./harness";
@@ -60,7 +61,7 @@ test("restart: a cross-ocean relocation glides and a new trace replaces the old 
   expect(Object.keys(last.entities).filter((k) => !k.includes("g:") && !k.includes("l:")).sort())
     .toEqual(["0", "2:1", "2:2", "2:3", "2:4"]);
   expect(Object.keys(last.entities).filter((k) => k.includes("g:")).sort()).toEqual(["2:g:1", "2:g:2", "2:g:3", "2:g:4", "g:0"]);
-  await expect(page.locator(".hop")).toHaveCount(4);
+  await expect(page.locator(".hop")).toHaveCount(expectedRows(FIXTURES.restart.file).length);
 });
 
 test("real macOS recording: hops and enrichment stream in smoothly", async ({ page }) => {

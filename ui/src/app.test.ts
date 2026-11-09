@@ -14,8 +14,8 @@ const hop = (ttl: number): ServerMsg => ({
   type: "hop", ttl, probes: [{ ip: "10.0.0.1", rttMs: 1 }], ip: "10.0.0.1", host: null, asn: null, org: null,
   lat: null, lon: null, city: null, geoSource: "estimated", annotations: [],
 });
-const connected: ConnState = { status: "connected", failures: 0 };
-const disconnected: ConnState = { status: "disconnected", failures: 1 };
+const connected: ConnState = { status: "connected", failures: 0, slow: false };
+const disconnected: ConnState = { status: "disconnected", failures: 1, slow: true };
 
 const fakeHud = () => {
   const calls = { renders: [] as [TraceState, ConnState][], views: [] as View[], focus: [] as (number | null)[] };

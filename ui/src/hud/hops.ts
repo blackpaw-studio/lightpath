@@ -1,47 +1,143 @@
 import type { GeoSource, Hop, Probe } from "../protocol";
 import { meanRtt, rttColor } from "../color";
+import { delayText, hasSolidLocation, medianRtt, placeLabel, type Row } from "./rows";
 
-export type Badge = "measured" | "estimated";
+export const QUIET_SUBTITLE = "Many networks hide their routers; the path continues.";
+export const STOPPED_SUBTITLE = "The trace stopped here; the destination didn't answer.";
 
-export const badgeFor = (src: GeoSource): Badge => (src === "estimated" ? "estimated" : "measured");
+export interface RowHandlers {
+  /** Called after a row flips, so the HUD can keep it open across re-renders. */
+  onToggle(key: string, expanded: boolean): void;
+  /** Hop rows only: also point the scene at this hop. */
+  onFocus(ttl: number): void;
+}
+
+type HopRow = Extract<Row, { kind: "hop" }>;
+type QuietRow = Extract<Row, { kind: "quiet" }>;
 
 export const rttText = (probes: readonly Probe[]): string =>
   probes.map((p) => (p.rttMs === null ? "*" : p.rttMs.toFixed(1) + " ms")).join(" · ");
 
-const asnText = (h: Hop): string =>
-  [h.asn === null ? null : "AS" + h.asn, h.org].filter((x): x is string => x !== null && x !== "").join(" ");
-
-const cell = (doc: Document, cls: string, text: string): HTMLElement => {
-  const el = doc.createElement("span");
-  el.className = cls;
-  el.textContent = text; // agent-supplied: textContent only
-  return el;
+const SOURCE_TEXT: Readonly<Record<GeoSource, string>> = {
+  api: "Measured (ip-api)",
+  hostname: "Measured (hostname)",
+  local: "Measured (local)",
+  estimated: "Estimated",
 };
 
-/** One hop row. All data goes through textContent. */
-export const hopRow = (doc: Document, hop: Hop, onFocus: (ttl: number) => void): HTMLElement => {
-  const row = doc.createElement("li");
-  row.className = "hop";
-  row.dataset.ttl = String(hop.ttl);
-  row.tabIndex = 0;
-  row.style.setProperty("--rtt", rttColor(meanRtt(hop.probes)));
+const asnText = (h: Hop): string | null => {
+  const text = [h.asn === null ? null : "AS" + h.asn, h.org].filter((x): x is string => x !== null && x !== "").join(" ");
+  return text === "" ? null : text;
+};
 
-  const badge = badgeFor(hop.geoSource);
-  const meta = [asnText(hop), hop.city ?? ""].filter((x) => x !== "").join(" · ");
-  const top = doc.createElement("div");
-  top.className = "hop-top";
-  top.append(cell(doc, "ttl", String(hop.ttl)), cell(doc, "ip", hop.ip ?? "*"), cell(doc, "badge " + badge, badge));
-  const sub = doc.createElement("div");
-  sub.className = "hop-sub";
-  sub.append(cell(doc, "host", hop.host ?? ""), cell(doc, "meta", meta), cell(doc, "rtt", rttText(hop.probes)));
-  row.append(top, sub);
+const el = <K extends keyof HTMLElementTagNameMap>(
+  doc: Document, tag: K, cls = "", text?: string,
+): HTMLElementTagNameMap[K] => {
+  const e = doc.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text; // agent-supplied: textContent only
+  return e;
+};
 
-  row.addEventListener("click", () => onFocus(hop.ttl));
-  row.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onFocus(hop.ttl);
-    }
+const detailList = (doc: Document, lines: readonly (readonly [string, string | null])[]): HTMLElement => {
+  const dl = el(doc, "dl", "detail-list");
+  for (const [label, value] of lines) {
+    if (value === null || value === "") continue;
+    dl.append(el(doc, "dt", "", label), el(doc, "dd", "", value));
+  }
+  return dl;
+};
+
+/**
+ * The row is an <li>; its header is the button (details stay outside it, since a
+ * button's children are presentational). Toggling flips the DOM in place and
+ * reports the new state; Enter, Space and click all toggle.
+ */
+const assemble = (
+  doc: Document, key: string, cls: string, headChildren: readonly HTMLElement[], detailEl: HTMLElement,
+  expanded: boolean, afterToggle: () => void, h: RowHandlers,
+): HTMLElement => {
+  const li = el(doc, "li", cls);
+  li.dataset.key = key;
+  const head = el(doc, "div", "hop-head");
+  head.setAttribute("role", "button");
+  head.tabIndex = 0;
+  head.append(...headChildren);
+  const details = el(doc, "div", "details");
+  details.id = "details-" + key;
+  details.append(detailEl);
+  head.setAttribute("aria-controls", details.id);
+
+  // The reveal animation belongs to a user toggle, not to a render: rows rebuilt while hops stream stay still.
+  const clearOpening = (e: Event): void => {
+    if (e.target === details) li.classList.remove("opening");
+  };
+  li.addEventListener("animationend", clearOpening);
+  const set = (open: boolean): void => {
+    head.setAttribute("aria-expanded", String(open));
+    details.hidden = !open;
+    li.classList.toggle("open", open);
+  };
+  set(expanded);
+  const toggle = (): void => {
+    const open = head.getAttribute("aria-expanded") !== "true";
+    set(open);
+    li.classList.toggle("opening", open);
+    h.onToggle(key, open);
+    afterToggle();
+  };
+  head.addEventListener("click", toggle);
+  head.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    toggle();
   });
-  return row;
+  li.append(head, details);
+  return li;
 };
+
+/** A responding hop: place, one delay, and details on demand. */
+export const hopRowEl = (doc: Document, row: HopRow, expanded: boolean, h: RowHandlers): HTMLElement => {
+  const hop = row.hop;
+  const dot = el(doc, "span", "dot " + (hasSolidLocation(hop) ? "solid" : "hollow"));
+  dot.setAttribute("aria-hidden", "true");
+  const rtt = medianRtt(hop.probes);
+  const detail = detailList(doc, [
+    ["IP", hop.ip ?? "*"],
+    ["Host", hop.host],
+    ["Network", asnText(hop)],
+    ["Replies", rttText(hop.probes)],
+    ["Location", SOURCE_TEXT[hop.geoSource]],
+  ]);
+  const li = assemble(
+    doc, row.key, "hop",
+    [dot, el(doc, "span", "place", placeLabel(hop)), el(doc, "span", "delay", rtt === null ? "" : delayText(rtt))],
+    detail, expanded, () => h.onFocus(hop.ttl), h,
+  );
+  li.dataset.ttl = String(hop.ttl);
+  li.style.setProperty("--rtt", rttColor(meanRtt(hop.probes)));
+  return li;
+};
+
+/** A run of silent hops: one quiet line, expandable to the hop numbers. Never moves the scene. */
+export const quietRowEl = (
+  doc: Document, row: QuietRow, expanded: boolean, h: RowHandlers, stopped = false,
+): HTMLElement => {
+  const n = row.ttls.length;
+  const connector = el(doc, "span", "connector");
+  connector.setAttribute("aria-hidden", "true");
+  const text = el(doc, "span", "quiet-text");
+  text.append(
+    el(doc, "span", "place", `${n} ${n === 1 ? "router" : "routers"} stayed quiet`),
+    el(doc, "span", "subtitle", stopped ? STOPPED_SUBTITLE : QUIET_SUBTITLE),
+  );
+  const li = assemble(
+    doc, row.key, "hop quiet", [connector, text], detailList(doc, [["Hops", row.ttls.join(", ")]]),
+    expanded, () => {}, h,
+  );
+  li.dataset.ttls = row.ttls.join(" ");
+  return li;
+};
+
+export const rowEl = (doc: Document, row: Row, expanded: boolean, h: RowHandlers, stopped = false): HTMLElement =>
+  row.kind === "hop" ? hopRowEl(doc, row, expanded, h) : quietRowEl(doc, row, expanded, h, stopped);

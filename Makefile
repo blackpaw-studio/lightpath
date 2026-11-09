@@ -30,7 +30,8 @@ e2e-local: build
 
 install-test:
 	sh install_test.sh
-	shellcheck install_test.sh ui/public/install.sh
+	sh run_test.sh
+	shellcheck install_test.sh run_test.sh ui/public/install.sh ui/public/run.sh
 
 # Local GoReleaser build, no publish: archives land in dist/.
 snapshot:

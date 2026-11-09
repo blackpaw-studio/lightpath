@@ -1,8 +1,9 @@
 import "./styles.css";
 import type { ConnState } from "../conn";
 import type { TraceState } from "../reducer";
-import { hopRow } from "./hops";
+import { rowEl, type RowHandlers } from "./hops";
 import { installPanel } from "./install";
+import { groupHops, isIpLiteral, summaryLine, trailingStopKey } from "./rows";
 import { sparkline } from "./sparkline";
 
 export interface HudHandlers {
@@ -41,11 +42,11 @@ const make = <K extends keyof HTMLElementTagNameMap>(
 
 const summary = (s: TraceState, connected: boolean): string => {
   if (s.status === "idle" || s.target === null) return "Enter a host to trace the route from here.";
-  const ip = s.resolvedIp ? " (" + s.resolvedIp + ")" : "";
+  const ip = s.resolvedIp && !isIpLiteral(s.target) ? " (" + s.resolvedIp + ")" : "";
   const runningTail = connected ? " · tracing…" : " · disconnected: trace interrupted";
   const tail =
     s.status === "done" ? (s.reached ? " · reached" : " · not reached") : s.status === "running" ? runningTail : "";
-  return s.target + ip + tail;
+  return "To " + s.target + ip + tail;
 };
 
 export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud => {
@@ -74,11 +75,13 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
   viewBtn.type = "button";
   const sheetHead = make(doc, "div", "sheet-head");
   sheetHead.append(status, viewBtn);
+  const stats = make(doc, "p", "stats");
+  stats.hidden = true;
   const error = make(doc, "p", "error");
   error.hidden = true;
   const spark = make(doc, "div", "spark-wrap");
   const list = make(doc, "ol", "hops");
-  sheet.append(sheetHead, error, spark, list, make(doc, "p", "attribution", ATTRIBUTION));
+  sheet.append(sheetHead, stats, error, spark, list, make(doc, "p", "attribution", ATTRIBUTION));
 
   const ua = opts.userAgent ?? (typeof navigator === "undefined" ? "" : navigator.userAgent);
   const install = installPanel(doc, ua);
@@ -90,6 +93,7 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
   let connected = false;
   let focus: number | null = null;
   let hopCount = 0;
+  let expanded: ReadonlySet<string> = new Set();
 
   const syncButtons = (): void => {
     traceBtn.textContent = running ? "Cancel" : "Trace";
@@ -100,7 +104,10 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
   const applyFocus = (): void =>
     list
       .querySelectorAll<HTMLElement>(".hop")
-      .forEach((r) => r.classList.toggle("focus", r.dataset.ttl === String(focus)));
+      .forEach((r) => {
+        const ttls = r.dataset.ttl !== undefined ? [r.dataset.ttl] : (r.dataset.ttls ?? "").split(" ");
+        r.classList.toggle("focus", focus !== null && ttls.includes(String(focus)));
+      });
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -114,6 +121,27 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
     applyFocus();
     h.onFocusHop(ttl);
   };
+  const rowHandlers: RowHandlers = {
+    onToggle: (key, open) => {
+      expanded = new Set(open ? [...expanded, key] : [...expanded].filter((k) => k !== key));
+    },
+    onFocus: focusHop,
+  };
+  /** Rebuilds the list but keeps the scroll offset and keyboard focus the user had. */
+  const renderRows = (state: TraceState): void => {
+    const rows = groupHops(state.hops);
+    const stopKey = trailingStopKey(state, rows);
+    expanded = new Set(rows.map((r) => r.key).filter((k) => expanded.has(k)));
+    const active = doc.activeElement;
+    const focusedKey = active && list.contains(active) ? active.closest<HTMLElement>("li")?.dataset.key : undefined;
+    const scrollTop = list.scrollTop;
+    list.replaceChildren(...rows.map((r) => rowEl(doc, r, expanded.has(r.key), rowHandlers, r.key === stopKey)));
+    list.scrollTop = scrollTop;
+    if (focusedKey !== undefined) {
+      [...list.children].find((li) => (li as HTMLElement).dataset.key === focusedKey)
+        ?.querySelector<HTMLElement>('[role="button"]')?.focus({ preventScroll: true });
+    }
+  };
 
   return {
     render(state, conn) {
@@ -125,9 +153,11 @@ export const mount = (root: HTMLElement, h: HudHandlers, opts: HudOptions): Hud 
       status.textContent = summary(state, connected);
       error.hidden = state.error === null;
       error.textContent = state.error?.message ?? "";
-      install.hidden = !(opts.hosted && conn.status !== "connected" && conn.failures > 0);
+      install.hidden = !(opts.hosted && conn.status !== "connected" && conn.slow);
       sheet.classList.toggle("empty", state.hops.length === 0);
-      list.replaceChildren(...state.hops.map((hop) => hopRow(doc, hop, focusHop)));
+      stats.hidden = state.status !== "done";
+      stats.textContent = state.status === "done" ? summaryLine(state) : "";
+      renderRows(state);
       spark.replaceChildren(...(state.hops.length > 1 ? [sparkline(doc, state.hops.map((x) => x.probes))] : []));
       applyFocus();
       syncButtons();

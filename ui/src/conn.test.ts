@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { backoffDelay, connect, wsUrl, type ConnState } from "./conn";
+import { backoffDelay, connect, SLOW_MS, wsUrl, type ConnState } from "./conn";
 
 describe("wsUrl", () => {
   it("uses the serving host on the agent-served page (supports --port)", () => {
@@ -52,20 +52,20 @@ describe("connect", () => {
 
   it("reports connecting then connected and resets failures on open", () => {
     start();
-    expect(states.at(-1)).toEqual({ status: "connecting", failures: 0 });
+    expect(states.at(-1)).toEqual({ status: "connecting", failures: 0, slow: false });
     FakeSocket.all[0]!.onopen!();
-    expect(states.at(-1)).toEqual({ status: "connected", failures: 0 });
+    expect(states.at(-1)).toEqual({ status: "connected", failures: 0, slow: false });
   });
 
   it("reconnects with growing backoff and counts failures", () => {
     start();
     FakeSocket.all[0]!.onclose!();
-    expect(states.at(-1)).toEqual({ status: "disconnected", failures: 1 });
+    expect(states.at(-1)).toEqual({ status: "disconnected", failures: 1, slow: true });
     vi.advanceTimersByTime(499);
     expect(FakeSocket.all).toHaveLength(1);
     vi.advanceTimersByTime(1);
     expect(FakeSocket.all).toHaveLength(2);
-    expect(states.at(-1)).toEqual({ status: "connecting", failures: 1 });
+    expect(states.at(-1)).toEqual({ status: "connecting", failures: 1, slow: true });
     FakeSocket.all[1]!.onclose!();
     vi.advanceTimersByTime(999);
     expect(FakeSocket.all).toHaveLength(2);
@@ -79,7 +79,7 @@ describe("connect", () => {
     vi.advanceTimersByTime(500);
     FakeSocket.all[1]!.onopen!();
     FakeSocket.all[1]!.onclose!();
-    expect(states.at(-1)).toEqual({ status: "disconnected", failures: 1 });
+    expect(states.at(-1)).toEqual({ status: "disconnected", failures: 1, slow: true });
     vi.advanceTimersByTime(500);
     expect(FakeSocket.all).toHaveLength(3);
   });
@@ -98,6 +98,56 @@ describe("connect", () => {
     FakeSocket.all[0]!.onopen!();
     expect(c.send({ type: "trace.start", target: "example.com" })).toBe(true);
     expect(FakeSocket.all[0]!.sent).toEqual([JSON.stringify({ type: "trace.start", target: "example.com" })]);
+  });
+
+  it("is not slow while a dial is pending under 1.5 s, slow at 1.5 s, without closing the socket", () => {
+    start();
+    expect(states.at(-1)).toMatchObject({ status: "connecting", slow: false });
+    vi.advanceTimersByTime(SLOW_MS - 1);
+    expect(states.at(-1)).toMatchObject({ slow: false });
+    vi.advanceTimersByTime(1);
+    expect(states.at(-1)).toMatchObject({ status: "connecting", slow: true });
+    expect(FakeSocket.all[0]!.closed).toBe(false);
+  });
+
+  it("is slow within 1 s of a first close", () => {
+    start();
+    vi.advanceTimersByTime(10);
+    FakeSocket.all[0]!.onclose!();
+    expect(states.at(-1)).toMatchObject({ status: "disconnected", slow: true });
+  });
+
+  it("is slow as soon as the socket errors, even if close never follows (WebKit)", () => {
+    start();
+    FakeSocket.all[0]!.onerror!();
+    expect(states.at(-1)).toMatchObject({ slow: true });
+  });
+
+  it("clears slow and the pending-dial timer once the socket opens, with no reload", () => {
+    start();
+    vi.advanceTimersByTime(SLOW_MS);
+    FakeSocket.all[0]!.onopen!();
+    expect(states.at(-1)).toEqual({ status: "connected", failures: 0, slow: false });
+    const n = states.length;
+    vi.advanceTimersByTime(60_000);
+    expect(states).toHaveLength(n);
+  });
+
+  it("keeps retrying in the background after going slow, and recovers when the agent answers", () => {
+    start();
+    FakeSocket.all[0]!.onclose!();
+    vi.advanceTimersByTime(500);
+    expect(states.at(-1)).toMatchObject({ status: "connecting", slow: true });
+    FakeSocket.all[1]!.onopen!();
+    expect(states.at(-1)).toEqual({ status: "connected", failures: 0, slow: false });
+  });
+
+  it("close() cancels the pending-dial timer", () => {
+    const c = start();
+    c.close();
+    const n = states.length;
+    vi.advanceTimersByTime(60_000);
+    expect(states).toHaveLength(n);
   });
 
   it("close stops reconnecting", () => {

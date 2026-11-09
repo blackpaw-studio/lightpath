@@ -45,7 +45,7 @@ export const hudView = (mode: ViewMode): View => (mode === "diving" || mode === 
 
 export const createController = (deps: ControllerDeps): Controller => {
   let state: TraceState = initialState;
-  let conn: ConnState = { status: "connecting", failures: 0 };
+  let conn: ConnState = { status: "connecting", failures: 0, slow: false };
   let hud: HudLike | null = null;
   let scene: SceneLike | null = null;
   let view: View = "globe";
