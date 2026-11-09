@@ -9,6 +9,7 @@ import (
 
 	"github.com/blackpaw-studio/lightpath/internal/enrich"
 	"github.com/blackpaw-studio/lightpath/internal/live"
+	"github.com/blackpaw-studio/lightpath/internal/reach"
 	"github.com/blackpaw-studio/lightpath/internal/server"
 	"github.com/blackpaw-studio/lightpath/internal/target"
 	"github.com/blackpaw-studio/lightpath/internal/trace"
@@ -43,6 +44,7 @@ func newLiveSource(ctx context.Context) (server.TraceSource, server.Validator, e
 			Origin: origin,
 		}),
 		Origin:   origin,
+		Reach:    reach.Checker{Dial: (&net.Dialer{}).DialContext, Clock: clock},
 		Validate: target.Validate,
 	})
 	if err != nil {
