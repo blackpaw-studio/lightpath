@@ -45,6 +45,7 @@ func newLiveSource(ctx context.Context) (server.TraceSource, server.Validator, e
 		}),
 		Origin:   origin,
 		Reach:    reach.Checker{Dial: (&net.Dialer{}).DialContext, Clock: clock},
+		Clock:    clock,
 		Validate: target.Validate,
 	})
 	if err != nil {

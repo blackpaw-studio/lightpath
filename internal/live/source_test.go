@@ -114,6 +114,7 @@ func newTestSourceReach(t *testing.T, r *fakeRunner, e Enricher, rc Reacher) *So
 	t.Helper()
 	s, err := New(Config{
 		Reach:    rc,
+		Clock:    newFakeClock(),
 		Runner:   r,
 		Command:  func(target string) (string, []string) { return "traceroute", []string{"-n", target} },
 		Enricher: e,

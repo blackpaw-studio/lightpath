@@ -142,6 +142,7 @@ func TestLiveSourceOverWebSocketRestartDropsOldTrace(t *testing.T) {
 		Enricher: enricher,
 		Origin:   originSource{},
 		Reach:    noReach{},
+		Clock:    enrich.RealClock,
 	})
 	if err != nil {
 		t.Fatal(err)

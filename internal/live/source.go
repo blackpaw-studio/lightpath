@@ -45,6 +45,8 @@ type Config struct {
 	Enricher Enricher
 	Origin   OriginSource
 	Reach    Reacher
+	// Clock times the destination grace period (enrich.RealClock in production).
+	Clock    reach.Clock
 	Validate func(target string) error
 }
 
@@ -54,8 +56,8 @@ type Source struct{ cfg Config }
 
 // New returns a Source, or an error if a dependency is missing.
 func New(cfg Config) (*Source, error) {
-	if cfg.Runner == nil || cfg.Command == nil || cfg.Enricher == nil || cfg.Origin == nil || cfg.Reach == nil {
-		return nil, errors.New("live: config needs a runner, command, enricher, origin and reach checker")
+	if cfg.Runner == nil || cfg.Command == nil || cfg.Enricher == nil || cfg.Origin == nil || cfg.Reach == nil || cfg.Clock == nil {
+		return nil, errors.New("live: config needs a runner, command, enricher, origin, reach checker and clock")
 	}
 	if cfg.Validate == nil {
 		cfg.Validate = target.Validate
@@ -113,14 +115,14 @@ func (r *traceRun) handle(ev trace.Event) {
 		r.waits = append(r.waits, r.src.cfg.Enricher.Enrich(r.ctx, hop, r.emit))
 	case trace.Done:
 		r.waitAll()
-		done := protocol.TraceDone{Reached: e.Reached, Destination: r.destWait()}
+		done := protocol.TraceDone{Reached: e.Reached, Destination: r.destWait(true)}
 		if e.Reason.Valid() {
 			done.Reason = &e.Reason
 		}
 		r.emitIfLive(done)
 	case trace.ErrorEvent:
 		r.waitAll()
-		r.destWait()
+		r.destWait(false) // an error has no use for the destination: don't delay it
 		r.emitIfLive(protocol.Error{Code: e.Code, Message: e.Message})
 	}
 }
@@ -160,5 +162,5 @@ func (r *traceRun) waitAll() {
 func (r *traceRun) drain(cancel context.CancelFunc) {
 	cancel()
 	r.waitAll()
-	r.destWait()
+	r.destWait(false)
 }
