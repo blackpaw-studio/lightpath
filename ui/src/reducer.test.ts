@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Hop, Origin, ServerMsg } from "./protocol";
+import type { Destination, Hop, Origin, ServerMsg } from "./protocol";
 import { initialState, interrupt, reduce, type TraceState } from "./reducer";
 
 const origin: Origin = { publicIp: "1.1.1.1", lat: 1, lon: 2, city: "X", asn: null, org: null };
@@ -82,3 +82,33 @@ describe("interrupt", () => {
     expect(interrupt(done, "disconnected", "x")).toBe(done);
   });
 });
+
+describe("end reason and destination", () => {
+  const dest: Destination = {
+    ip: "9.9.9.9", reachable: true, port: 443, rttMs: 12, host: null, asn: null, org: null,
+    lat: null, lon: null, city: null, geoSource: "estimated",
+  };
+  it("starts with neither", () => {
+    expect(run(started)).toMatchObject({ endReason: null, destination: null });
+  });
+  it("derives the reason from reached for a legacy trace.done", () => {
+    expect(run(started, { type: "trace.done", reached: true })).toMatchObject({ endReason: "reached", destination: null });
+    expect(run(started, { type: "trace.done", reached: false })).toMatchObject({ endReason: "limit" });
+  });
+  it("records the reason and destination of a quiet finish", () => {
+    const s = run(started, { type: "trace.done", reached: false, reason: "quiet", destination: dest });
+    expect(s).toMatchObject({ status: "done", reached: false, endReason: "quiet", destination: dest });
+  });
+  it("records an agent error as the end reason", () => {
+    expect(run(started, { type: "error", code: "traceroute_failed", message: "x" }).endReason).toBe("error");
+  });
+  it("records a user cancel as cancelled and a dropped connection as error", () => {
+    expect(interrupt(run(started), "cancelled", "x").endReason).toBe("cancelled");
+    expect(interrupt(run(started), "disconnected", "x").endReason).toBe("error");
+  });
+  it("trace.started clears both", () => {
+    const done = run(started, { type: "trace.done", reached: false, reason: "quiet", destination: dest });
+    expect(reduce(done, started)).toMatchObject({ endReason: null, destination: null });
+  });
+});
+
