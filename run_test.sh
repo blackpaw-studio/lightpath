@@ -120,7 +120,7 @@ bad="$TMP/bad"
 cp -R "$TMP/release" "$bad"
 printf 'tampered' >>"$bad/download/v1.2.3/lightpath_linux_amd64.tar.gz"
 run_run Linux x86_64 "file://$bad" v1.2.3
-if [ "$code" -ne 0 ] && printf '%s' "$out" | grep -qi checksum && [ ! -e "$cache/lightpath/v1.2.3" ] \
+if [ "$code" -ne 0 ] && printf '%s' "$out" | grep -qi checksum && [ -z "$(find "$cache" -type f)" ] \
   && ! printf '%s' "$out" | grep -q 'lightpath-linux'; then
   pass "checksum mismatch fails and caches nothing"
 else
@@ -132,7 +132,7 @@ nosum="$TMP/nosum"
 cp -R "$TMP/release" "$nosum"
 : >"$nosum/download/v1.2.3/checksums.txt"
 run_run Linux x86_64 "file://$nosum" v1.2.3
-if [ "$code" -ne 0 ] && [ ! -e "$cache/lightpath/v1.2.3" ]; then pass "missing checksum entry fails"
+if [ "$code" -ne 0 ] && [ -z "$(find "$cache" -type f)" ]; then pass "missing checksum entry fails"
 else fail "missing checksum entry fails (code=$code) $out"; fi
 
 # Unsupported arch / OS.
@@ -160,7 +160,22 @@ STUB_LATEST_URL="https://github.com/x/lightpath/releases/tag/nightly"; run_run L
 if [ "$code" -ne 0 ] && printf '%s' "$out" | grep -qi 'version'; then pass "rejects a malformed resolved tag"
 else fail "rejects a malformed resolved tag (code=$code) $out"; fi
 
-# A pre-planted symlink at the cache path is never executed: it is replaced by a verified download.
+# --- Cache trust -------------------------------------------------------------------------------
+# plant_evil <dir>: an executable "lightpath" that records being run.
+plant_evil() {
+  mkdir -p "$1"
+  printf '#!/bin/sh\ntouch "%s/pwned"\n' "$TMP" >"$1/lightpath"
+  chmod 755 "$1/lightpath"
+}
+# refused <name> <expected message fragment>: the run died, never executed the plant, said why.
+refused() {
+  if [ "$code" -ne 0 ] && [ ! -e "$TMP/pwned" ] && printf '%s' "$out" | grep -qi "$2" \
+    && ! printf '%s' "$out" | grep -q 'lightpath-linux'; then pass "$1"
+  else fail "$1 (code=$code) $out"; fi
+  rm -f "$TMP/pwned"
+}
+
+# A symlink at the cache path itself is refused, never executed, and left alone.
 CACHE_ID=symlink
 cache="$TMP/cache-symlink"
 mkdir -p "$cache/lightpath/v1.2.3"
@@ -168,13 +183,82 @@ printf '#!/bin/sh\ntouch "%s/pwned"\n' "$TMP" >"$TMP/evil"
 chmod +x "$TMP/evil"
 ln -s "$TMP/evil" "$cache/lightpath/v1.2.3/lightpath"
 run_run Linux x86_64 "$rel" v1.2.3
-if [ "$code" -eq 0 ] && [ ! -e "$TMP/pwned" ] && printf '%s' "$out" | grep -q 'lightpath-linux-amd64-v1.2.3' \
-  && [ ! -L "$cache/lightpath/v1.2.3/lightpath" ] && grep -q '#!/bin/sh' "$TMP/evil"; then
-  pass "does not trust a symlink at the cache path"
-else
-  fail "does not trust a symlink at the cache path (code=$code) $out"
-fi
+refused "refuses a symlink at the cache path" symlink
+if [ -L "$cache/lightpath/v1.2.3/lightpath" ]; then pass "leaves the planted symlink untouched"; else fail "leaves the planted symlink untouched"; fi
 unset CACHE_ID
+
+# A directory at the cache path is refused rather than moved into.
+CACHE_ID=dirdest
+cache="$TMP/cache-dirdest"
+mkdir -p "$cache/lightpath/v1.2.3/lightpath"
+run_run Linux x86_64 "$rel" v1.2.3
+refused "refuses a directory at the cache path" director
+if [ -z "$(find "$cache/lightpath/v1.2.3/lightpath" -type f 2>/dev/null)" ]; then pass "writes nothing into the planted directory"; else fail "writes nothing into the planted directory"; fi
+unset CACHE_ID
+
+# A symlinked version directory (even to a dir holding a valid executable) is never trusted.
+CACHE_ID=linkver
+cache="$TMP/cache-linkver"
+plant_evil "$TMP/elsewhere-ver"
+mkdir -p "$cache/lightpath"
+ln -s "$TMP/elsewhere-ver" "$cache/lightpath/v1.2.3"
+run_run Linux x86_64 "$rel" v1.2.3
+refused "refuses a symlinked version directory" symlink
+unset CACHE_ID
+
+# ... and so is a symlinked lightpath/ directory.
+CACHE_ID=linkroot
+cache="$TMP/cache-linkroot"
+plant_evil "$TMP/elsewhere-root/v1.2.3"
+mkdir -p "$cache"
+ln -s "$TMP/elsewhere-root" "$cache/lightpath"
+run_run Linux x86_64 "$rel" v1.2.3
+refused "refuses a symlinked lightpath directory" symlink
+unset CACHE_ID
+
+# Group- or world-writable cache directories can be tampered with by others: refused.
+for which in version root; do
+  for mode in g+w o+w; do
+    CACHE_ID="w-$which-$mode"
+    cache="$TMP/cache-$CACHE_ID"
+    plant_evil "$cache/lightpath/v1.2.3"
+    if [ "$which" = version ]; then chmod "$mode" "$cache/lightpath/v1.2.3"; else chmod "$mode" "$cache/lightpath"; fi
+    run_run Linux x86_64 "$rel" v1.2.3
+    refused "refuses a $mode $which cache directory" writable
+    unset CACHE_ID
+  done
+done
+
+# A cached binary that others can write is not trusted: it is replaced by a verified download.
+CACHE_ID=binwritable
+cache="$TMP/cache-binwritable"
+plant_evil "$cache/lightpath/v1.2.3"
+chmod g+w "$cache/lightpath/v1.2.3/lightpath"
+run_run Linux x86_64 "$rel" v1.2.3
+if [ "$code" -eq 0 ] && [ ! -e "$TMP/pwned" ] && printf '%s' "$out" | grep -q 'lightpath-linux-amd64-v1.2.3'; then
+  pass "replaces a group-writable cached binary instead of running it"
+else fail "replaces a group-writable cached binary (code=$code) $out"; fi
+rm -f "$TMP/pwned"
+unset CACHE_ID
+
+# Cache directories this script creates are private (0700), and so is the binary's parent chain.
+CACHE_ID=private
+run_run Linux x86_64 "$rel" v1.2.3
+# find -perm -go=rwx would match any bit; 700 exactly means no group/other access at all.
+if [ "$code" -eq 0 ] && [ -n "$(find "$cache/lightpath" "$cache/lightpath/v1.2.3" -maxdepth 0 -perm 700 | sed -n 2p)" ]; then
+  pass "creates the cache directories private (0700)"
+else fail "creates the cache directories private (0700)"; fi
+unset CACHE_ID
+
+# A version containing a newline must be rejected as a whole, not line by line.
+nl=$(printf '\n_'); nl=${nl%_}
+run_run Linux x86_64 "$rel" "v1.2.3${nl}evil"
+if [ "$code" -ne 0 ] && printf '%s' "$out" | grep -qi 'version' && ! find "$cache" -type f 2>/dev/null | grep -q .; then
+  pass "rejects a version with an embedded newline"
+else fail "rejects a version with an embedded newline (code=$code) $out"; fi
+STUB_LATEST_URL="https://github.com/x/lightpath/releases/tag/v1.2.3${nl}evil"; run_run Linux x86_64 "$rel"; unset STUB_LATEST_URL
+if [ "$code" -ne 0 ] && printf '%s' "$out" | grep -qi 'version'; then pass "rejects a resolved tag with an embedded newline"
+else fail "rejects a resolved tag with an embedded newline (code=$code) $out"; fi
 
 # A non-executable cached file is re-downloaded rather than exec'd.
 CACHE_ID=noexec

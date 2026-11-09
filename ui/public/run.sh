@@ -68,12 +68,44 @@ resolve_version() {
     v="${url##*/}"
   fi
   # The tag becomes a path component and a URL segment: accept nothing but vX.Y.Z.
+  # grep matches per line, so refuse a multi-line value outright first.
+  case "$v" in
+    *'
+'*) die "unexpected version (contains a newline)" ;;
+  esac
   printf '%s' "$v" | grep -Eq '^v[0-9]+(\.[0-9]+){2}$' || die "unexpected version '$v' (want vX.Y.Z)"
   echo "$v"
 }
 
-# A cached binary is trusted only if it is a regular, executable, non-symlink file.
-is_cached() { [ -f "$1" ] && [ ! -L "$1" ] && [ -x "$1" ]; }
+# True when $1 is owned by the current user (test -O is not POSIX).
+owned_by_me() { [ -n "$(find "$1" -prune -user "$(id -u)" 2>/dev/null)" ]; }
+
+# True when neither group nor others can write to $1 (mode string positions 6 and 9).
+not_shared_writable() {
+  # shellcheck disable=SC2012 # ls -ld is the portable way to read the mode string
+  mode=$(ls -ld "$1" | cut -c1-10)
+  [ "$(printf '%s' "$mode" | cut -c6)" != w ] && [ "$(printf '%s' "$mode" | cut -c9)" != w ]
+}
+
+# Creates $1 private (0700) if missing, then requires it to be a real directory (not a
+# symlink) that only this user can write to. Anything else could have been planted.
+ensure_private_dir() {
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then mkdir -m 700 "$1" || die "cannot create $1"; fi
+  [ ! -L "$1" ] || die "$1 is a symlink: refusing to use it (remove it and retry)"
+  [ -d "$1" ] || die "$1 is not a directory (remove it and retry)"
+  owned_by_me "$1" || die "$1 is not owned by you: refusing to use it"
+  not_shared_writable "$1" || die "$1 is group- or world-writable: refusing to use it (chmod go-w it and retry)"
+}
+
+# The cache path must be free for a regular file: a symlink or directory there could redirect the move.
+check_dest() {
+  [ ! -L "$1" ] || die "$1 is a symlink: refusing to replace it (remove it and retry)"
+  [ ! -d "$1" ] || die "$1 is a directory: refusing to replace it (remove it and retry)"
+}
+
+# A cached binary is trusted only if it is a regular, executable, non-symlink file
+# that only this user owns and can write.
+is_cached() { [ -f "$1" ] && [ ! -L "$1" ] && [ -x "$1" ] && owned_by_me "$1" && not_shared_writable "$1"; }
 
 download() { # download <version> <os> <arch> <dest binary>
   name="lightpath_${2}_${3}.tar.gz"
@@ -94,11 +126,11 @@ download() { # download <version> <os> <arch> <dest binary>
   tar -xzf "$tmp/$name" -C "$tmp/x" lightpath || die "could not extract $name"
 
   dir=$(dirname "$4")
-  mkdir -p "$dir" || die "cannot create $dir"
   stage=$(mktemp -d "$dir/.lightpath.XXXXXX") || die "cannot write to $dir"
   cp "$tmp/x/lightpath" "$stage/lightpath" || die "cannot write to $dir"
   chmod 755 "$stage/lightpath"
-  mv -f "$stage/lightpath" "$4" || die "cannot cache to $dir" # rename: replaces a symlink, never follows it
+  check_dest "$4"
+  mv -f "$stage/lightpath" "$4" || die "cannot cache to $dir"
 
   rm -rf "$tmp" "$stage"
   trap - EXIT INT TERM
@@ -113,9 +145,18 @@ main() {
   elif [ -n "${HOME:-}" ]; then cache_base="$HOME/.cache"
   else die "set HOME or XDG_CACHE_HOME"
   fi
-  bin="$cache_base/lightpath/$version/lightpath"
+  umask 077
+  mkdir -p "$cache_base" || die "cannot create $cache_base"
+  root="$cache_base/lightpath"
+  vdir="$root/$version"
+  bin="$vdir/lightpath"
+  ensure_private_dir "$root"
+  ensure_private_dir "$vdir"
 
-  is_cached "$bin" || download "$version" "$os" "$arch" "$bin"
+  if ! is_cached "$bin"; then
+    check_dest "$bin"
+    download "$version" "$os" "$arch" "$bin"
+  fi
 
   say "Running lightpath $version · Ctrl-C to stop"
   exec "$bin" --no-open </dev/null
