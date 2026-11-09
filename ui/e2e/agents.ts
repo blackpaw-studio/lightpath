@@ -7,14 +7,14 @@ export interface Agent {
 const DEFAULT_PORT_BASE = 47811;
 
 /**
- * First of five consecutive ports for the replay agents. Set
+ * First of six consecutive ports for the replay agents. Set
  * LIGHTPATH_E2E_PORT_BASE to run several worktrees' suites side by side.
  */
 export const portBase = (env: Readonly<Record<string, string | undefined>> = process.env): number => {
   const raw = env.LIGHTPATH_E2E_PORT_BASE;
   if (raw === undefined || raw === "") return DEFAULT_PORT_BASE;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1024 || n > 65531) throw new Error(`LIGHTPATH_E2E_PORT_BASE must be a port in 1024–65531, got "${raw}"`);
+  if (!Number.isInteger(n) || n < 1024 || n > 65530) throw new Error(`LIGHTPATH_E2E_PORT_BASE must be a port in 1024–65530, got "${raw}"`);
   return n;
 };
 
@@ -31,6 +31,8 @@ export const FIXTURES = {
   firewalled: { file: "quiet-firewalled.json", port: base + 3 },
   /** A quiet gap inside Verizon, then five silent hops; the destination answers over TCP (quiet finish with a destination). */
   quietReachable: { file: "quiet-reachable.json", port: base + 4 },
+  /** Brooklyn to Moscow: a Brisbane geo-IP at 10 ms (impossible), PCCW and Arelion hops, a quiet run, reached at Yandex. */
+  longHaul: { file: "long-haul-moscow.json", port: base + 5 },
 } as const satisfies Record<string, Agent>;
 
 export const agentUrl = (a: Agent, query = "test=1"): string => `http://127.0.0.1:${a.port}/?${query}`;
