@@ -27,6 +27,7 @@ const KNOWN: readonly Known[] = [
   { name: "Zayo", asns: [6461], org: /\bzayo\b/i },
   { name: "GTT", asns: [3257], org: /\bgtt\b/i },
   { name: "Tata", asns: [6453], org: /\btata\b/i },
+  { name: "PCCW Global", asns: [3491], org: /\bpccw\b/i },
   { name: "Meta", asns: [32934], org: /\b(meta platforms|facebook)\b/i },
   { name: "Apple", asns: [714, 6185], org: /^apple\b/i },
 ];
@@ -45,12 +46,20 @@ const titleCase = (word: string): string => {
   return word.toLowerCase().replace(/(^|-)([a-z])/g, (_m, sep: string, c: string) => sep + c.toUpperCase());
 };
 
-const clean = (org: string): string | null => {
-  const head = org.split(/\s-\s|,|\(/)[0] ?? "";
+/** Name from one text fragment: cut at the first "," or "(", drop a leading ASN and trailing corporate suffixes. */
+const cleanFragment = (text: string): string | null => {
+  const head = text.split(/,|\(/)[0] ?? "";
   const words = head.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
   while (words.length > 0 && /^AS\d+$/i.test(words[0]!)) words.shift();
   while (words.length > 0 && CORPORATE_SUFFIXES.has(bare(words.at(-1)!))) words.pop();
   return words.length === 0 ? null : words.map(titleCase).join(" ");
+};
+
+/** Team Cymru orgs read "HANDLE - Description, CC": prefer the description, fall back to the handle. */
+const clean = (org: string): string | null => {
+  const at = org.indexOf(" - ");
+  if (at < 0) return cleanFragment(org);
+  return cleanFragment(org.slice(at + 3)) ?? cleanFragment(org.slice(0, at));
 };
 
 /** "UUNET - Verizon Business, US" → "Verizon"; unknown orgs are cleaned up; null when nothing usable. */
