@@ -112,11 +112,14 @@ func (c Checker) connect(ctx context.Context, addr string) (time.Duration, error
 	return rtt, nil
 }
 
-// withTimeout is context.WithTimeout driven by an injected Clock.
+// withTimeout is context.WithTimeout driven by an injected Clock. The returned
+// cancel also joins the timer goroutine, so nothing outlives the caller.
 func withTimeout(ctx context.Context, clk Clock, d time.Duration) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(ctx)
 	timer, stop := clk.Timer(d)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer stop()
 		select {
 		case <-timer:
@@ -124,5 +127,8 @@ func withTimeout(ctx context.Context, clk Clock, d time.Duration) (context.Conte
 		case <-ctx.Done():
 		}
 	}()
-	return ctx, cancel
+	return ctx, func() {
+		cancel()
+		<-done
+	}
 }

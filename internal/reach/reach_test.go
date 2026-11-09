@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -28,6 +29,9 @@ type timer struct {
 	fire chan time.Time
 }
 
+// stops counts Timer stop calls across every timer handed out.
+var stops atomic.Int32
+
 func newClock() *fakeClock {
 	return &fakeClock{now: time.Unix(1_700_000_000, 0), timers: make(chan timer, 16)}
 }
@@ -47,7 +51,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 func (c *fakeClock) Timer(d time.Duration) (<-chan time.Time, func()) {
 	t := timer{d: d, fire: make(chan time.Time, 1)}
 	c.timers <- t
-	return t.fire, func() {}
+	return t.fire, func() { stops.Add(1) }
 }
 
 // recordingConn counts writes and closes.
@@ -244,5 +248,22 @@ func TestIPv6AddressIsBracketed(t *testing.T) {
 	Checker{Dial: dial, Clock: newClock(), Ports: []int{443}}.Check(context.Background(), netip.MustParseAddr("2001:db8::1"))
 	if want := "[2001:db8::1]:" + strconv.Itoa(443); addr != want {
 		t.Fatalf("addr = %q, want %q", addr, want)
+	}
+}
+
+// Check must not leave a timeout goroutine behind: by the time it returns every
+// timer it started has been stopped.
+func TestCheckJoinsItsTimeoutGoroutines(t *testing.T) {
+	for range 200 {
+		stops.Store(0)
+		clk := newClock()
+		dial := func(context.Context, string, string) (net.Conn, error) { return &recordingConn{}, nil }
+		Checker{Dial: dial, Clock: clk}.Check(context.Background(), target)
+		if got, want := int(stops.Load()), len(clk.timers); got != want {
+			t.Fatalf("timers stopped when Check returned = %d, started = %d", got, want)
+		}
+		for len(clk.timers) > 0 {
+			<-clk.timers
+		}
 	}
 }
