@@ -29,7 +29,14 @@ type HookWindow = Window & { __lightpath: Required<TestHooks> };
 
 export const openApp = async (page: Page, agent: Agent): Promise<void> => {
   await page.goto(agentUrl(agent));
-  await page.waitForFunction(() => "__lightpath" in window, null, { timeout: 30_000 });
+  // Fail fast and legibly when the scene never starts (e.g. no WebGL in headless Firefox on Linux).
+  await page.waitForFunction(
+    () => "__lightpath" in window || document.body.classList.contains("no-scene"),
+    null,
+    { timeout: 30_000 },
+  );
+  const noScene = await page.evaluate(() => document.body.classList.contains("no-scene"));
+  if (noScene) throw new Error("scene failed to start (no-scene): is WebGL available in this browser?");
   await expect(page.locator(".chip")).toHaveText("connected");
 };
 

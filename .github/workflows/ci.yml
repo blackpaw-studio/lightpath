@@ -62,5 +62,8 @@ jobs:
       - run: go build -o lightpath ./cmd/lightpath
       - run: npx playwright install --with-deps
         working-directory: ui
-      - run: npx playwright test --pass-with-no-tests
+      # Firefox has no WebGL when headless on Linux, so run it headed under xvfb.
+      - run: xvfb-run -a npx playwright test --pass-with-no-tests
         working-directory: ui
+        env:
+          LIGHTPATH_E2E_FIREFOX_HEADED: "1"
