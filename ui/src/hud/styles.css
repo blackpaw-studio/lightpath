@@ -68,18 +68,20 @@
   padding: 10px 16px; background: linear-gradient(135deg, var(--cyan), #7aa8ff);
 }
 .hud button:disabled { opacity: 0.4; cursor: not-allowed; }
-.hud button:focus-visible, .hop-head:focus-visible, .agent-link:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.hud button:focus-visible, .hop-head:focus-visible, .agent-link:focus-visible, .install-link:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .hud button.view, .hud button.copy {
   color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--edge);
   padding: 6px 12px; font-size: 12px;
 }
 
 .install h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
-.install .step { margin: 10px 0 4px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.install .note { margin: 8px 0 0; font-size: 13px; color: var(--text); }
 .code-row { display: flex; gap: 8px; align-items: center; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 8px 8px 12px; }
 .code-row code { flex: 1; min-width: 0; font: 400 12px var(--mono); color: var(--cyan); white-space: normal; word-break: break-all; line-height: 1.5; }
 .install .hint { font-size: 12.5px; line-height: 1.45; color: var(--dim); margin: 12px 0 8px; }
-.agent-link { color: var(--cyan); font-size: 13px; font-weight: 500; }
+.agent-link, .install-link { color: var(--cyan); font-size: 13px; font-weight: 500; }
+.install-link { font-size: 12px; font-weight: 400; color: var(--dim); }
+.install-links { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; }
 
 .sheet { display: flex; flex-direction: column; min-height: 0; max-height: calc(100% - 140px); }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

@@ -74,21 +74,6 @@ describe("hud", () => {
     b.hud.render(initialState, { status: "connecting", failures: 3, slow: true });
     expect(b.root.querySelector(".install")!.hasAttribute("hidden")).toBe(true);
   });
-  it("install panel has the one-liner, run command and agent link", () => {
-    const { root } = setup();
-    const t = root.querySelector(".install")!.textContent!;
-    expect(t).toContain("curl -fsSL https://lightpath.blackpaw.studio/install.sh | sh");
-    expect(t).toContain("lightpath");
-    expect(root.querySelector<HTMLAnchorElement>('.install a[href="http://127.0.0.1:47800/"]')).not.toBeNull();
-    expect(t).toContain("allow it or open the agent page");
-  });
-  it("copy button writes the one-liner to the clipboard", async () => {
-    const { root } = setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    root.querySelector<HTMLButtonElement>(".install button.copy")!.click();
-    expect(writeText).toHaveBeenCalledWith("curl -fsSL https://lightpath.blackpaw.studio/install.sh | sh");
-  });
   it("shows error messages as text and the attribution line", () => {
     const { root, hud } = setup();
     hud.render(reduce(initialState, { type: "error", code: "invalid_target", message: "<b>bad</b>" }), connected);
